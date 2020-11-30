@@ -1,17 +1,11 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
-import { parse } from '../../language';
+
+import { parse } from '../../language/parser';
+
 import { getOperationAST } from '../getOperationAST';
 
 describe('getOperationAST', () => {
-
   it('Gets an operation from a simple document', () => {
     const doc = parse('{ field }');
     expect(getOperationAST(doc)).to.equal(doc.definitions[0]);
@@ -36,7 +30,8 @@ describe('getOperationAST', () => {
     const doc = parse(`
       { field }
       mutation Test { field }
-      subscription TestSub { field }`);
+      subscription TestSub { field }
+    `);
     expect(getOperationAST(doc)).to.equal(null);
   });
 
@@ -44,15 +39,19 @@ describe('getOperationAST', () => {
     const doc = parse(`
       query TestQ { field }
       mutation TestM { field }
-      subscription TestS { field }`);
+      subscription TestS { field }
+    `);
     expect(getOperationAST(doc)).to.equal(null);
   });
 
   it('Does not get misnamed operation', () => {
     const doc = parse(`
+      { field }
+
       query TestQ { field }
       mutation TestM { field }
-      subscription TestS { field }`);
+      subscription TestS { field }
+    `);
     expect(getOperationAST(doc, 'Unknown')).to.equal(null);
   });
 
@@ -60,10 +59,10 @@ describe('getOperationAST', () => {
     const doc = parse(`
       query TestQ { field }
       mutation TestM { field }
-      subscription TestS { field }`);
+      subscription TestS { field }
+    `);
     expect(getOperationAST(doc, 'TestQ')).to.equal(doc.definitions[0]);
     expect(getOperationAST(doc, 'TestM')).to.equal(doc.definitions[1]);
     expect(getOperationAST(doc, 'TestS')).to.equal(doc.definitions[2]);
   });
-
 });

@@ -1,63 +1,55 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- *
- * @flow
- */
-
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
-import { StarWarsSchema } from './starWarsSchema.js';
-import { graphql } from '../graphql';
 
-// 80+ char lines are useful in describe/it, so ignore in this file.
-/* eslint-disable max-len */
+import { graphql, graphqlSync } from '../graphql';
+
+import { StarWarsSchema as schema } from './starWarsSchema';
 
 describe('Star Wars Query Tests', () => {
   describe('Basic Queries', () => {
     it('Correctly identifies R2-D2 as the hero of the Star Wars Saga', async () => {
-      const query = `
+      const source = `
         query HeroNameQuery {
           hero {
             name
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           hero: {
-            name: 'R2-D2'
-          }
-        }
+            name: 'R2-D2',
+          },
+        },
       });
     });
 
-    it('Accepts an object with named properties to graphql()', async () => {
-      const query = `
+    it('Accepts positional arguments to graphql()', async () => {
+      const source = `
         query HeroNameQuery {
           hero {
             name
           }
         }
       `;
-      const result = await graphql({
-        schema: StarWarsSchema,
-        source: query,
-      });
+
+      const result = await graphql(schema, source);
       expect(result).to.deep.equal({
         data: {
           hero: {
-            name: 'R2-D2'
-          }
-        }
+            name: 'R2-D2',
+          },
+        },
       });
+
+      const syncResult = graphqlSync(schema, source);
+      expect(syncResult).to.deep.equal(result);
     });
 
     it('Allows us to query for the ID and friends of R2-D2', async () => {
-      const query = `
+      const source = `
         query HeroNameAndFriendsQuery {
           hero {
             id
@@ -68,7 +60,8 @@ describe('Star Wars Query Tests', () => {
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           hero: {
@@ -84,16 +77,16 @@ describe('Star Wars Query Tests', () => {
               {
                 name: 'Leia Organa',
               },
-            ]
-          }
-        }
+            ],
+          },
+        },
       });
     });
   });
 
   describe('Nested Queries', () => {
     it('Allows us to query for the friends of friends of R2-D2', async () => {
-      const query = `
+      const source = `
         query NestedQuery {
           hero {
             name
@@ -107,7 +100,8 @@ describe('Star Wars Query Tests', () => {
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           hero: {
@@ -115,7 +109,7 @@ describe('Star Wars Query Tests', () => {
             friends: [
               {
                 name: 'Luke Skywalker',
-                appearsIn: [ 'NEWHOPE', 'EMPIRE', 'JEDI' ],
+                appearsIn: ['NEW_HOPE', 'EMPIRE', 'JEDI'],
                 friends: [
                   {
                     name: 'Han Solo',
@@ -129,11 +123,11 @@ describe('Star Wars Query Tests', () => {
                   {
                     name: 'R2-D2',
                   },
-                ]
+                ],
               },
               {
                 name: 'Han Solo',
-                appearsIn: [ 'NEWHOPE', 'EMPIRE', 'JEDI' ],
+                appearsIn: ['NEW_HOPE', 'EMPIRE', 'JEDI'],
                 friends: [
                   {
                     name: 'Luke Skywalker',
@@ -144,11 +138,11 @@ describe('Star Wars Query Tests', () => {
                   {
                     name: 'R2-D2',
                   },
-                ]
+                ],
               },
               {
                 name: 'Leia Organa',
-                appearsIn: [ 'NEWHOPE', 'EMPIRE', 'JEDI' ],
+                appearsIn: ['NEW_HOPE', 'EMPIRE', 'JEDI'],
                 friends: [
                   {
                     name: 'Luke Skywalker',
@@ -162,111 +156,122 @@ describe('Star Wars Query Tests', () => {
                   {
                     name: 'R2-D2',
                   },
-                ]
+                ],
               },
-            ]
-          }
-        }
+            ],
+          },
+        },
       });
     });
   });
 
   describe('Using IDs and query parameters to refetch objects', () => {
-    it('Allows us to query for Luke Skywalker directly, using his ID', async () => {
-      const query = `
-        query FetchLukeQuery {
+    it('Allows us to query characters directly, using their IDs', async () => {
+      const source = `
+        query FetchLukeAndC3POQuery {
           human(id: "1000") {
+            name
+          }
+          droid(id: "2000") {
             name
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           human: {
-            name: 'Luke Skywalker'
-          }
-        }
+            name: 'Luke Skywalker',
+          },
+          droid: {
+            name: 'C-3PO',
+          },
+        },
       });
     });
 
     it('Allows us to create a generic query, then use it to fetch Luke Skywalker using his ID', async () => {
-      const query = `
+      const source = `
         query FetchSomeIDQuery($someId: String!) {
           human(id: $someId) {
             name
           }
         }
       `;
-      const params = { someId: '1000' };
-      const result = await graphql(StarWarsSchema, query, null, null, params);
+      const variableValues = { someId: '1000' };
+
+      const result = await graphql({ schema, source, variableValues });
       expect(result).to.deep.equal({
         data: {
           human: {
-            name: 'Luke Skywalker'
-          }
-        }
+            name: 'Luke Skywalker',
+          },
+        },
       });
     });
 
     it('Allows us to create a generic query, then use it to fetch Han Solo using his ID', async () => {
-      const query = `
+      const source = `
         query FetchSomeIDQuery($someId: String!) {
           human(id: $someId) {
             name
           }
         }
       `;
-      const params = { someId: '1002' };
-      const result = await graphql(StarWarsSchema, query, null, null, params);
+      const variableValues = { someId: '1002' };
+
+      const result = await graphql({ schema, source, variableValues });
       expect(result).to.deep.equal({
         data: {
           human: {
-            name: 'Han Solo'
-          }
-        }
+            name: 'Han Solo',
+          },
+        },
       });
     });
 
     it('Allows us to create a generic query, then pass an invalid ID to get null back', async () => {
-      const query = `
+      const source = `
         query humanQuery($id: String!) {
           human(id: $id) {
             name
           }
         }
       `;
-      const params = { id: 'not a valid id' };
-      const result = await graphql(StarWarsSchema, query, null, null, params);
+      const variableValues = { id: 'not a valid id' };
+
+      const result = await graphql({ schema, source, variableValues });
       expect(result).to.deep.equal({
         data: {
-          human: null
-        }
+          human: null,
+        },
       });
     });
   });
 
   describe('Using aliases to change the key in the response', () => {
     it('Allows us to query for Luke, changing his key with an alias', async () => {
-      const query = `
+      const source = `
         query FetchLukeAliased {
           luke: human(id: "1000") {
             name
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           luke: {
-            name: 'Luke Skywalker'
-          }
-        }
+            name: 'Luke Skywalker',
+          },
+        },
       });
     });
 
     it('Allows us to query for both Luke and Leia, using two root fields and an alias', async () => {
-      const query = `
+      const source = `
         query FetchLukeAndLeiaAliased {
           luke: human(id: "1000") {
             name
@@ -276,23 +281,24 @@ describe('Star Wars Query Tests', () => {
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           luke: {
-            name: 'Luke Skywalker'
+            name: 'Luke Skywalker',
           },
           leia: {
-            name: 'Leia Organa'
-          }
-        }
+            name: 'Leia Organa',
+          },
+        },
       });
     });
   });
 
   describe('Uses fragments to express more complex queries', () => {
     it('Allows us to query using duplicated content', async () => {
-      const query = `
+      const source = `
         query DuplicateFields {
           luke: human(id: "1000") {
             name
@@ -304,23 +310,24 @@ describe('Star Wars Query Tests', () => {
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           luke: {
             name: 'Luke Skywalker',
-            homePlanet: 'Tatooine'
+            homePlanet: 'Tatooine',
           },
           leia: {
             name: 'Leia Organa',
-            homePlanet: 'Alderaan'
-          }
-        }
+            homePlanet: 'Alderaan',
+          },
+        },
       });
     });
 
     it('Allows us to use a fragment to avoid duplicating content', async () => {
-      const query = `
+      const source = `
         query UseFragment {
           luke: human(id: "1000") {
             ...HumanFragment
@@ -335,25 +342,26 @@ describe('Star Wars Query Tests', () => {
           homePlanet
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           luke: {
             name: 'Luke Skywalker',
-            homePlanet: 'Tatooine'
+            homePlanet: 'Tatooine',
           },
           leia: {
             name: 'Leia Organa',
-            homePlanet: 'Alderaan'
-          }
-        }
+            homePlanet: 'Alderaan',
+          },
+        },
       });
     });
   });
 
   describe('Using __typename to find the type of an object', () => {
     it('Allows us to verify that R2-D2 is a droid', async () => {
-      const query = `
+      const source = `
         query CheckTypeOfR2 {
           hero {
             __typename
@@ -361,19 +369,20 @@ describe('Star Wars Query Tests', () => {
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           hero: {
             __typename: 'Droid',
-            name: 'R2-D2'
-          }
-        }
+            name: 'R2-D2',
+          },
+        },
       });
     });
 
     it('Allows us to verify that Luke is a human', async () => {
-      const query = `
+      const source = `
         query CheckTypeOfLuke {
           hero(episode: EMPIRE) {
             __typename
@@ -381,21 +390,22 @@ describe('Star Wars Query Tests', () => {
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           hero: {
             __typename: 'Human',
-            name: 'Luke Skywalker'
-          }
-        }
+            name: 'Luke Skywalker',
+          },
+        },
       });
     });
   });
 
   describe('Reporting errors raised in resolvers', () => {
     it('Correctly reports error on accessing secretBackstory', async () => {
-      const query = `
+      const source = `
         query HeroNameQuery {
           hero {
             name
@@ -403,26 +413,27 @@ describe('Star Wars Query Tests', () => {
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           hero: {
             name: 'R2-D2',
-            secretBackstory: null
-          }
+            secretBackstory: null,
+          },
         },
         errors: [
           {
             message: 'secretBackstory is secret.',
-            locations: [ { line: 5, column: 13 } ],
-            path: [ 'hero', 'secretBackstory' ]
-          }
-        ]
+            locations: [{ line: 5, column: 13 }],
+            path: ['hero', 'secretBackstory'],
+          },
+        ],
       });
     });
 
     it('Correctly reports error on accessing secretBackstory in a list', async () => {
-      const query = `
+      const source = `
         query HeroNameQuery {
           hero {
             name
@@ -433,7 +444,8 @@ describe('Star Wars Query Tests', () => {
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           hero: {
@@ -451,31 +463,31 @@ describe('Star Wars Query Tests', () => {
                 name: 'Leia Organa',
                 secretBackstory: null,
               },
-            ]
-          }
+            ],
+          },
         },
         errors: [
           {
             message: 'secretBackstory is secret.',
-            locations: [ { line: 7, column: 15 } ],
-            path: [ 'hero', 'friends', 0, 'secretBackstory' ]
+            locations: [{ line: 7, column: 15 }],
+            path: ['hero', 'friends', 0, 'secretBackstory'],
           },
           {
             message: 'secretBackstory is secret.',
-            locations: [ { line: 7, column: 15 } ],
-            path: [ 'hero', 'friends', 1, 'secretBackstory' ]
+            locations: [{ line: 7, column: 15 }],
+            path: ['hero', 'friends', 1, 'secretBackstory'],
           },
           {
             message: 'secretBackstory is secret.',
-            locations: [ { line: 7, column: 15 } ],
-            path: [ 'hero', 'friends', 2, 'secretBackstory' ]
-          }
-        ]
+            locations: [{ line: 7, column: 15 }],
+            path: ['hero', 'friends', 2, 'secretBackstory'],
+          },
+        ],
       });
     });
 
     it('Correctly reports error on accessing through an alias', async () => {
-      const query = `
+      const source = `
         query HeroNameQuery {
           mainHero: hero {
             name
@@ -483,21 +495,22 @@ describe('Star Wars Query Tests', () => {
           }
         }
       `;
-      const result = await graphql(StarWarsSchema, query);
+
+      const result = await graphql({ schema, source });
       expect(result).to.deep.equal({
         data: {
           mainHero: {
             name: 'R2-D2',
             story: null,
-          }
+          },
         },
         errors: [
           {
             message: 'secretBackstory is secret.',
-            locations: [ { line: 5, column: 13 } ],
-            path: [ 'mainHero', 'story' ]
-          }
-        ]
+            locations: [{ line: 5, column: 13 }],
+            path: ['mainHero', 'story'],
+          },
+        ],
       });
     });
   });

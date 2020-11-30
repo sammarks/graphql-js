@@ -1,28 +1,62 @@
-#!/bin/sh -e
+#!/bin/bash
 
-# This script maintains a git branch which mirrors master but in a form that
-# what will eventually be deployed to npm, allowing npm dependencies to use:
+#  This script maintains a git branch which mirrors master but in a form that
+#  what will eventually be deployed to npm, allowing npm dependencies to use:
 #
-#     "graphql": "git://github.com/graphql/graphql-js.git#npm"
+#      "graphql": "git://github.com/graphql/graphql-js.git#npm"
 #
+#  Additionally it use use to push Deno build to `deno` branch.
 
-babel src --ignore __tests__ --out-dir npm
+BRANCH=$1
+DIST_DIR=$2
 
-# Ensure a vanilla package.json before deploying so other tools do not interpret
-# The built output as requiring any further transformation.
-node -e "var package = require('./package.json'); \
-  delete package.scripts; \
-  delete package.options; \
-  delete package.devDependencies; \
-  require('fs').writeFileSync('./npm/package.json', JSON.stringify(package, null, 2));"
+# Exit immediately if any subcommand terminated
+set -e
 
-cp README.md npm/
-cp LICENSE npm/
+if [ -z "${BRANCH}" ]; then
+ echo 'Must provide BRANCH as first argument!'
+ exit 1;
+fi;
 
-cd npm
-git init
-git config user.name "Travis CI"
-git config user.email "github@fb.com"
-git add .
-git commit -m "Deploy master to NPM branch"
-git push --force --quiet "https://${GH_TOKEN}@github.com/graphql/graphql-js.git" master:npm
+if [ -z "${DIST_DIR}" ]; then
+ echo 'Must provide DIST_DIR as second argument!'
+ exit 1;
+fi;
+
+if [ -z "${GH_TOKEN}" ]; then
+ echo 'Must provide GH_TOKEN as environment variable!'
+ exit 1;
+fi;
+
+if [ ! -d $DIST_DIR ]; then
+ echo "Directory '${DIST_DIR}' does not  exist!"
+ exit 1;
+fi;
+
+# Create empty directory
+rm -rf $BRANCH
+git clone -b $BRANCH -- "https://${GH_TOKEN}@github.com/graphql/graphql-js.git" $BRANCH
+
+# Remove existing files first
+rm -rf $BRANCH/**/*
+rm -rf $BRANCH/*
+
+# Copy over necessary files
+cp -r $DIST_DIR/* $BRANCH/
+
+# Reference current commit
+HEAD_REV=`git rev-parse HEAD`
+echo $HEAD_REV
+
+# Deploy
+cd $BRANCH
+git config user.name "GitHub Action Script"
+git config user.email "please@open.issue"
+git add -A .
+if git diff --staged --quiet; then
+  echo "Nothing to publish"
+else
+  git commit -a -m "Deploy $HEAD_REV to '$BRANCH' branch"
+  git push > /dev/null 2>&1
+  echo "Pushed"
+fi

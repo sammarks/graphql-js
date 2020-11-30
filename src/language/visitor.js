@@ -1,25 +1,79 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
+import inspect from '../jsutils/inspect';
 
-export const QueryDocumentKeys = {
+import type { ASTNode, ASTKindToNode } from './ast';
+import { isNode } from './ast';
+
+/**
+ * A visitor is provided to visit, it contains the collection of
+ * relevant functions to be called during the visitor's traversal.
+ */
+export type ASTVisitor = Visitor<ASTKindToNode>;
+export type Visitor<KindToNode, Nodes = $Values<KindToNode>> =
+  | EnterLeave<
+      | VisitFn<Nodes>
+      | ShapeMap<KindToNode, <Node>(Node) => VisitFn<Nodes, Node>>,
+    >
+  | ShapeMap<
+      KindToNode,
+      <Node>(Node) => VisitFn<Nodes, Node> | EnterLeave<VisitFn<Nodes, Node>>,
+    >;
+type EnterLeave<T> = {| +enter?: T, +leave?: T |};
+type ShapeMap<O, F> = $Shape<$ObjMap<O, F>>;
+
+/**
+ * A visitor is comprised of visit functions, which are called on each node
+ * during the visitor's traversal.
+ */
+export type VisitFn<TAnyNode, TVisitedNode: TAnyNode = TAnyNode> = (
+  // The current node being visiting.
+  node: TVisitedNode,
+  // The index or key to this node from the parent node or Array.
+  key: string | number | void,
+  // The parent immediately above this node, which may be an Array.
+  parent: TAnyNode | $ReadOnlyArray<TAnyNode> | void,
+  // The key path to get to this node from the root node.
+  path: $ReadOnlyArray<string | number>,
+  // All nodes and Arrays visited before reaching parent of this node.
+  // These correspond to array indices in `path`.
+  // Note: ancestors includes arrays which contain the parent of visited node.
+  ancestors: $ReadOnlyArray<TAnyNode | $ReadOnlyArray<TAnyNode>>,
+) => any;
+
+/**
+ * A KeyMap describes each the traversable properties of each kind of node.
+ */
+export type VisitorKeyMap<KindToNode> = $ObjMap<
+  KindToNode,
+  <T>(T) => $ReadOnlyArray<$Keys<T>>,
+>;
+
+export const QueryDocumentKeys: VisitorKeyMap<ASTKindToNode> = {
   Name: [],
 
-  Document: [ 'definitions' ],
-  OperationDefinition:
-    [ 'name', 'variableDefinitions', 'directives', 'selectionSet' ],
-  VariableDefinition: [ 'variable', 'type', 'defaultValue' ],
-  Variable: [ 'name' ],
-  SelectionSet: [ 'selections' ],
-  Field: [ 'alias', 'name', 'arguments', 'directives', 'selectionSet' ],
-  Argument: [ 'name', 'value' ],
+  Document: ['definitions'],
+  OperationDefinition: [
+    'name',
+    'variableDefinitions',
+    'directives',
+    'selectionSet',
+  ],
+  VariableDefinition: ['variable', 'type', 'defaultValue', 'directives'],
+  Variable: ['name'],
+  SelectionSet: ['selections'],
+  Field: ['alias', 'name', 'arguments', 'directives', 'selectionSet'],
+  Argument: ['name', 'value'],
 
-  FragmentSpread: [ 'name', 'directives' ],
-  InlineFragment: [ 'typeCondition', 'directives', 'selectionSet' ],
-  FragmentDefinition: [ 'name', 'typeCondition', 'directives', 'selectionSet' ],
+  FragmentSpread: ['name', 'directives'],
+  InlineFragment: ['typeCondition', 'directives', 'selectionSet'],
+  FragmentDefinition: [
+    'name',
+    // Note: fragment variable definitions are experimental and may be changed
+    // or removed in the future.
+    'variableDefinitions',
+    'typeCondition',
+    'directives',
+    'selectionSet',
+  ],
 
   IntValue: [],
   FloatValue: [],
@@ -27,38 +81,63 @@ export const QueryDocumentKeys = {
   BooleanValue: [],
   NullValue: [],
   EnumValue: [],
-  ListValue: [ 'values' ],
-  ObjectValue: [ 'fields' ],
-  ObjectField: [ 'name', 'value' ],
+  ListValue: ['values'],
+  ObjectValue: ['fields'],
+  ObjectField: ['name', 'value'],
 
-  Directive: [ 'name', 'arguments' ],
+  Directive: ['name', 'arguments'],
 
-  NamedType: [ 'name' ],
-  ListType: [ 'type' ],
-  NonNullType: [ 'type' ],
+  NamedType: ['name'],
+  ListType: ['type'],
+  NonNullType: ['type'],
 
-  SchemaDefinition: [ 'directives', 'operationTypes' ],
-  OperationTypeDefinition: [ 'type' ],
+  SchemaDefinition: ['description', 'directives', 'operationTypes'],
+  OperationTypeDefinition: ['type'],
 
-  ScalarTypeDefinition: [ 'name', 'directives' ],
-  ObjectTypeDefinition: [ 'name', 'interfaces', 'directives', 'fields' ],
-  FieldDefinition: [ 'name', 'arguments', 'type', 'directives' ],
-  InputValueDefinition: [ 'name', 'type', 'defaultValue', 'directives' ],
-  InterfaceTypeDefinition: [ 'name', 'directives', 'fields' ],
-  UnionTypeDefinition: [ 'name', 'directives', 'types' ],
-  EnumTypeDefinition: [ 'name', 'directives', 'values' ],
-  EnumValueDefinition: [ 'name', 'directives' ],
-  InputObjectTypeDefinition: [ 'name', 'directives', 'fields' ],
+  ScalarTypeDefinition: ['description', 'name', 'directives'],
+  ObjectTypeDefinition: [
+    'description',
+    'name',
+    'interfaces',
+    'directives',
+    'fields',
+  ],
+  FieldDefinition: ['description', 'name', 'arguments', 'type', 'directives'],
+  InputValueDefinition: [
+    'description',
+    'name',
+    'type',
+    'defaultValue',
+    'directives',
+  ],
+  InterfaceTypeDefinition: [
+    'description',
+    'name',
+    'interfaces',
+    'directives',
+    'fields',
+  ],
+  UnionTypeDefinition: ['description', 'name', 'directives', 'types'],
+  EnumTypeDefinition: ['description', 'name', 'directives', 'values'],
+  EnumValueDefinition: ['description', 'name', 'directives'],
+  InputObjectTypeDefinition: ['description', 'name', 'directives', 'fields'],
 
-  TypeExtensionDefinition: [ 'definition' ],
+  DirectiveDefinition: ['description', 'name', 'arguments', 'locations'],
 
-  DirectiveDefinition: [ 'name', 'arguments', 'locations' ],
+  SchemaExtension: ['directives', 'operationTypes'],
+
+  ScalarTypeExtension: ['name', 'directives'],
+  ObjectTypeExtension: ['name', 'interfaces', 'directives', 'fields'],
+  InterfaceTypeExtension: ['name', 'interfaces', 'directives', 'fields'],
+  UnionTypeExtension: ['name', 'directives', 'types'],
+  EnumTypeExtension: ['name', 'directives', 'values'],
+  InputObjectTypeExtension: ['name', 'directives', 'fields'],
 };
 
-export const BREAK = {};
+export const BREAK: { ... } = Object.freeze({});
 
 /**
- * visit() will walk through an AST using a depth first traversal, calling
+ * visit() will walk through an AST using a depth-first traversal, calling
  * the visitor's enter function at each node in the traversal, and calling the
  * leave function after visiting that node and all of its child nodes.
  *
@@ -92,10 +171,10 @@ export const BREAK = {};
  *
  * Alternatively to providing enter() and leave() functions, a visitor can
  * instead provide functions named the same as the kinds of AST nodes, or
- * enter/leave visitors at a named key, leading to four permutations of
+ * enter/leave visitors at a named key, leading to four permutations of the
  * visitor API:
  *
- * 1) Named visitors triggered when entering a node a specific kind.
+ * 1) Named visitors triggered when entering a node of a specific kind.
  *
  *     visit(ast, {
  *       Kind(node) {
@@ -143,27 +222,31 @@ export const BREAK = {};
  *       }
  *     })
  */
-export function visit(root, visitor, keyMap) {
-  const visitorKeys = keyMap || QueryDocumentKeys;
-
-  let stack;
+export function visit(
+  root: ASTNode,
+  visitor: Visitor<ASTKindToNode>,
+  visitorKeys: VisitorKeyMap<ASTKindToNode> = QueryDocumentKeys,
+): any {
+  /* eslint-disable no-undef-init */
+  let stack: any = undefined;
   let inArray = Array.isArray(root);
-  let keys = [ root ];
+  let keys: any = [root];
   let index = -1;
   let edits = [];
-  let parent;
-  const path = [];
+  let node: any = undefined;
+  let key: any = undefined;
+  let parent: any = undefined;
+  const path: any = [];
   const ancestors = [];
   let newRoot = root;
+  /* eslint-enable no-undef-init */
 
   do {
     index++;
     const isLeaving = index === keys.length;
-    let key;
-    let node;
     const isEdited = isLeaving && edits.length !== 0;
     if (isLeaving) {
-      key = ancestors.length === 0 ? undefined : path.pop();
+      key = ancestors.length === 0 ? undefined : path[path.length - 1];
       node = parent;
       parent = ancestors.pop();
       if (isEdited) {
@@ -171,16 +254,14 @@ export function visit(root, visitor, keyMap) {
           node = node.slice();
         } else {
           const clone = {};
-          for (const k in node) {
-            if (node.hasOwnProperty(k)) {
-              clone[k] = node[k];
-            }
+          for (const k of Object.keys(node)) {
+            clone[k] = node[k];
           }
           node = clone;
         }
         let editOffset = 0;
         for (let ii = 0; ii < edits.length; ii++) {
-          let editKey = edits[ii][0];
+          let editKey: any = edits[ii][0];
           const editValue = edits[ii][1];
           if (inArray) {
             editKey -= editOffset;
@@ -199,7 +280,7 @@ export function visit(root, visitor, keyMap) {
       inArray = stack.inArray;
       stack = stack.prev;
     } else {
-      key = parent ? inArray ? index : keys[index] : undefined;
+      key = parent ? (inArray ? index : keys[index]) : undefined;
       node = parent ? parent[key] : newRoot;
       if (node === null || node === undefined) {
         continue;
@@ -212,7 +293,7 @@ export function visit(root, visitor, keyMap) {
     let result;
     if (!Array.isArray(node)) {
       if (!isNode(node)) {
-        throw new Error('Invalid AST Node: ' + JSON.stringify(node));
+        throw new Error(`Invalid AST Node: ${inspect(node)}.`);
       }
       const visitFn = getVisitFn(visitor, node.kind, isLeaving);
       if (visitFn) {
@@ -228,7 +309,7 @@ export function visit(root, visitor, keyMap) {
             continue;
           }
         } else if (result !== undefined) {
-          edits.push([ key, result ]);
+          edits.push([key, result]);
           if (!isLeaving) {
             if (isNode(result)) {
               node = result;
@@ -242,13 +323,15 @@ export function visit(root, visitor, keyMap) {
     }
 
     if (result === undefined && isEdited) {
-      edits.push([ key, node ]);
+      edits.push([key, node]);
     }
 
-    if (!isLeaving) {
+    if (isLeaving) {
+      path.pop();
+    } else {
       stack = { inArray, index, keys, edits, prev: stack };
       inArray = Array.isArray(node);
-      keys = inArray ? node : visitorKeys[node.kind] || [];
+      keys = inArray ? node : visitorKeys[node.kind] ?? [];
       index = -1;
       edits = [];
       if (parent) {
@@ -265,24 +348,21 @@ export function visit(root, visitor, keyMap) {
   return newRoot;
 }
 
-function isNode(maybeNode) {
-  return maybeNode && typeof maybeNode.kind === 'string';
-}
-
-
 /**
  * Creates a new visitor instance which delegates to many visitors to run in
  * parallel. Each visitor will be visited for each node before moving on.
  *
  * If a prior visitor edits a node, no following visitors will see that node.
  */
-export function visitInParallel(visitors) {
+export function visitInParallel(
+  visitors: $ReadOnlyArray<Visitor<ASTKindToNode>>,
+): Visitor<ASTKindToNode> {
   const skipping = new Array(visitors.length);
 
   return {
     enter(node) {
       for (let i = 0; i < visitors.length; i++) {
-        if (!skipping[i]) {
+        if (skipping[i] == null) {
           const fn = getVisitFn(visitors[i], node.kind, /* isLeaving */ false);
           if (fn) {
             const result = fn.apply(visitors[i], arguments);
@@ -299,7 +379,7 @@ export function visitInParallel(visitors) {
     },
     leave(node) {
       for (let i = 0; i < visitors.length; i++) {
-        if (!skipping[i]) {
+        if (skipping[i] == null) {
           const fn = getVisitFn(visitors[i], node.kind, /* isLeaving */ true);
           if (fn) {
             const result = fn.apply(visitors[i], arguments);
@@ -313,57 +393,28 @@ export function visitInParallel(visitors) {
           skipping[i] = null;
         }
       }
-    }
-  };
-}
-
-
-/**
- * Creates a new visitor instance which maintains a provided TypeInfo instance
- * along with visiting visitor.
- */
-export function visitWithTypeInfo(typeInfo, visitor) {
-  return {
-    enter(node) {
-      typeInfo.enter(node);
-      const fn = getVisitFn(visitor, node.kind, /* isLeaving */ false);
-      if (fn) {
-        const result = fn.apply(visitor, arguments);
-        if (result !== undefined) {
-          typeInfo.leave(node);
-          if (isNode(result)) {
-            typeInfo.enter(result);
-          }
-        }
-        return result;
-      }
     },
-    leave(node) {
-      const fn = getVisitFn(visitor, node.kind, /* isLeaving */ true);
-      let result;
-      if (fn) {
-        result = fn.apply(visitor, arguments);
-      }
-      typeInfo.leave(node);
-      return result;
-    }
   };
 }
-
 
 /**
  * Given a visitor instance, if it is leaving or not, and a node kind, return
  * the function the visitor runtime should call.
  */
-export function getVisitFn(visitor, kind, isLeaving) {
+export function getVisitFn(
+  visitor: Visitor<any>,
+  kind: string,
+  isLeaving: boolean,
+): ?VisitFn<any> {
   const kindVisitor = visitor[kind];
   if (kindVisitor) {
     if (!isLeaving && typeof kindVisitor === 'function') {
       // { Kind() {} }
       return kindVisitor;
     }
-    const kindSpecificVisitor =
-      isLeaving ? kindVisitor.leave : kindVisitor.enter;
+    const kindSpecificVisitor = isLeaving
+      ? kindVisitor.leave
+      : kindVisitor.enter;
     if (typeof kindSpecificVisitor === 'function') {
       // { Kind: { enter() {}, leave() {} } }
       return kindSpecificVisitor;

@@ -1,23 +1,16 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- *
- * @flow
- */
+import invariant from '../jsutils/invariant';
 
+import { GraphQLSchema } from '../type/schema';
+import { GraphQLString } from '../type/scalars';
 import {
+  GraphQLList,
+  GraphQLNonNull,
   GraphQLEnumType,
   GraphQLInterfaceType,
   GraphQLObjectType,
-  GraphQLList,
-  GraphQLNonNull,
-  GraphQLSchema,
-  GraphQLString,
-} from '../type';
+} from '../type/definition';
 
-import { getFriends, getHero, getHuman, getDroid } from './starWarsData.js';
+import { getFriends, getHero, getHuman, getDroid } from './starWarsData';
 
 /**
  * This is designed to be an end-to-end test, demonstrating
@@ -34,7 +27,7 @@ import { getFriends, getHero, getHuman, getDroid } from './starWarsData.js';
  * Using our shorthand to describe type systems, the type system for our
  * Star Wars example is:
  *
- * enum Episode { NEWHOPE, EMPIRE, JEDI }
+ * enum Episode { NEW_HOPE, EMPIRE, JEDI }
  *
  * interface Character {
  *   id: String!
@@ -72,13 +65,13 @@ import { getFriends, getHero, getHuman, getDroid } from './starWarsData.js';
  * The original trilogy consists of three movies.
  *
  * This implements the following type system shorthand:
- *   enum Episode { NEWHOPE, EMPIRE, JEDI }
+ *   enum Episode { NEW_HOPE, EMPIRE, JEDI }
  */
 const episodeEnum = new GraphQLEnumType({
   name: 'Episode',
   description: 'One of the films in the Star Wars Trilogy',
   values: {
-    NEWHOPE: {
+    NEW_HOPE: {
       value: 4,
       description: 'Released in 1977.',
     },
@@ -90,7 +83,7 @@ const episodeEnum = new GraphQLEnumType({
       value: 6,
       description: 'Released in 1983.',
     },
-  }
+  },
 });
 
 /**
@@ -119,8 +112,8 @@ const characterInterface = new GraphQLInterfaceType({
     },
     friends: {
       type: new GraphQLList(characterInterface),
-      description: 'The friends of the character, or an empty list if they ' +
-                   'have none.',
+      description:
+        'The friends of the character, or an empty list if they have none.',
     },
     appearsIn: {
       type: new GraphQLList(episodeEnum),
@@ -132,13 +125,16 @@ const characterInterface = new GraphQLInterfaceType({
     },
   }),
   resolveType(character) {
-    if (character.type === 'Human') {
-      return humanType;
+    switch (character.type) {
+      case 'Human':
+        return humanType.name;
+      case 'Droid':
+        return droidType.name;
     }
-    if (character.type === 'Droid') {
-      return droidType;
-    }
-  }
+
+    // istanbul ignore next (Not reachable. All possible types have been considered)
+    invariant(false);
+  },
 });
 
 /**
@@ -169,7 +165,7 @@ const humanType = new GraphQLObjectType({
       type: new GraphQLList(characterInterface),
       description:
         'The friends of the human, or an empty list if they have none.',
-      resolve: human => getFriends(human),
+      resolve: (human) => getFriends(human),
     },
     appearsIn: {
       type: new GraphQLList(episodeEnum),
@@ -187,7 +183,7 @@ const humanType = new GraphQLObjectType({
       },
     },
   }),
-  interfaces: [ characterInterface ]
+  interfaces: [characterInterface],
 });
 
 /**
@@ -219,7 +215,7 @@ const droidType = new GraphQLObjectType({
       type: new GraphQLList(characterInterface),
       description:
         'The friends of the droid, or an empty list if they have none.',
-      resolve: droid => getFriends(droid),
+      resolve: (droid) => getFriends(droid),
     },
     appearsIn: {
       type: new GraphQLList(episodeEnum),
@@ -237,7 +233,7 @@ const droidType = new GraphQLObjectType({
       description: 'The primary function of the droid.',
     },
   }),
-  interfaces: [ characterInterface ]
+  interfaces: [characterInterface],
 });
 
 /**
@@ -261,41 +257,41 @@ const queryType = new GraphQLObjectType({
       type: characterInterface,
       args: {
         episode: {
-          description: 'If omitted, returns the hero of the whole saga. If ' +
-                       'provided, returns the hero of that particular episode.',
-          type: episodeEnum
-        }
+          description:
+            'If omitted, returns the hero of the whole saga. If provided, returns the hero of that particular episode.',
+          type: episodeEnum,
+        },
       },
-      resolve: (root, { episode }) => getHero(episode),
+      resolve: (_source, { episode }) => getHero(episode),
     },
     human: {
       type: humanType,
       args: {
         id: {
           description: 'id of the human',
-          type: new GraphQLNonNull(GraphQLString)
-        }
+          type: new GraphQLNonNull(GraphQLString),
+        },
       },
-      resolve: (root, { id }) => getHuman(id),
+      resolve: (_source, { id }) => getHuman(id),
     },
     droid: {
       type: droidType,
       args: {
         id: {
           description: 'id of the droid',
-          type: new GraphQLNonNull(GraphQLString)
-        }
+          type: new GraphQLNonNull(GraphQLString),
+        },
       },
-      resolve: (root, { id }) => getDroid(id),
+      resolve: (_source, { id }) => getDroid(id),
     },
-  })
+  }),
 });
 
 /**
  * Finally, we construct our schema (whose starting query type is the query
  * type we defined above) and export it.
  */
-export const StarWarsSchema = new GraphQLSchema({
+export const StarWarsSchema: GraphQLSchema = new GraphQLSchema({
   query: queryType,
-  types: [ humanType, droidType ]
+  types: [humanType, droidType],
 });

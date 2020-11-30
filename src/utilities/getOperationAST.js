@@ -1,15 +1,5 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- *
- * @flow
- */
-
-import { OPERATION_DEFINITION } from '../language/kinds';
 import type { DocumentNode, OperationDefinitionNode } from '../language/ast';
-
+import { Kind } from '../language/kinds';
 
 /**
  * Returns an operation AST given a document AST and optionally an operation
@@ -18,13 +8,12 @@ import type { DocumentNode, OperationDefinitionNode } from '../language/ast';
  */
 export function getOperationAST(
   documentAST: DocumentNode,
-  operationName: ?string
+  operationName?: ?string,
 ): ?OperationDefinitionNode {
   let operation = null;
-  for (let i = 0; i < documentAST.definitions.length; i++) {
-    const definition = documentAST.definitions[i];
-    if (definition.kind === OPERATION_DEFINITION) {
-      if (!operationName) {
+  for (const definition of documentAST.definitions) {
+    if (definition.kind === Kind.OPERATION_DEFINITION) {
+      if (operationName == null) {
         // If no operation name was provided, only return an Operation if there
         // is one defined in the document. Upon encountering the second, return
         // null.
@@ -32,7 +21,7 @@ export function getOperationAST(
           return null;
         }
         operation = definition;
-      } else if (definition.name && definition.name.value === operationName) {
+      } else if (definition.name?.value === operationName) {
         return definition;
       }
     }

@@ -1,39 +1,35 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- *
- * @flow
- */
+export { Source } from './source';
 
 export { getLocation } from './location';
-import * as Kind from './kinds';
-export { Kind };
-export { createLexer, TokenKind } from './lexer';
-export { parse, parseValue, parseType } from './parser';
-export { print } from './printer';
-export { Source } from './source';
-export {
-  visit,
-  visitInParallel,
-  visitWithTypeInfo,
-  getVisitFn,
-  BREAK,
-} from './visitor';
+export type { SourceLocation } from './location';
 
-export type { Lexer } from './lexer';
+export { printLocation, printSourceLocation } from './printLocation';
+
+export { Kind } from './kinds';
+export type { KindEnum } from './kinds';
+
+export { TokenKind } from './tokenKind';
+export type { TokenKindEnum } from './tokenKind';
+
+export { Lexer } from './lexer';
+
+export { parse, parseValue, parseType } from './parser';
 export type { ParseOptions } from './parser';
 
-export type {
-  Location,
-  Token,
-  ASTNode,
+export { print } from './printer';
 
+export { visit, visitInParallel, getVisitFn, BREAK } from './visitor';
+export type { ASTVisitor, Visitor, VisitFn, VisitorKeyMap } from './visitor';
+
+export { Location, Token } from './ast';
+export type {
+  ASTNode,
+  ASTKindToNode,
   // Each kind of AST node
   NameNode,
   DocumentNode,
   DefinitionNode,
+  ExecutableDefinitionNode,
   OperationDefinitionNode,
   OperationTypeNode,
   VariableDefinitionNode,
@@ -73,6 +69,29 @@ export type {
   EnumTypeDefinitionNode,
   EnumValueDefinitionNode,
   InputObjectTypeDefinitionNode,
-  TypeExtensionDefinitionNode,
   DirectiveDefinitionNode,
+  TypeSystemExtensionNode,
+  SchemaExtensionNode,
+  TypeExtensionNode,
+  ScalarTypeExtensionNode,
+  ObjectTypeExtensionNode,
+  InterfaceTypeExtensionNode,
+  UnionTypeExtensionNode,
+  EnumTypeExtensionNode,
+  InputObjectTypeExtensionNode,
 } from './ast';
+
+export {
+  isDefinitionNode,
+  isExecutableDefinitionNode,
+  isSelectionNode,
+  isValueNode,
+  isTypeNode,
+  isTypeSystemDefinitionNode,
+  isTypeDefinitionNode,
+  isTypeSystemExtensionNode,
+  isTypeExtensionNode,
+} from './predicates';
+
+export { DirectiveLocation } from './directiveLocation';
+export type { DirectiveLocationEnum } from './directiveLocation';

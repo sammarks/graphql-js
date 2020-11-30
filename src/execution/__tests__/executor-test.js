@@ -1,24 +1,24 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
-import { execute } from '../execute';
-import { formatError } from '../../error';
-import { parse } from '../../language';
+
+import inspect from '../../jsutils/inspect';
+import invariant from '../../jsutils/invariant';
+
+import { Kind } from '../../language/kinds';
+import { parse } from '../../language/parser';
+
+import { GraphQLSchema } from '../../type/schema';
+import { GraphQLInt, GraphQLBoolean, GraphQLString } from '../../type/scalars';
 import {
-  GraphQLSchema,
-  GraphQLObjectType,
   GraphQLList,
-  GraphQLBoolean,
-  GraphQLInt,
-  GraphQLString,
   GraphQLNonNull,
-} from '../../type';
+  GraphQLScalarType,
+  GraphQLInterfaceType,
+  GraphQLObjectType,
+  GraphQLUnionType,
+} from '../../type/definition';
+
+import { execute, executeSync } from '../execute';
 
 describe('Execute: Handles basic execution tasks', () => {
   it('throws if no document is provided', () => {
@@ -27,28 +27,49 @@ describe('Execute: Handles basic execution tasks', () => {
         name: 'Type',
         fields: {
           a: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
 
-    expect(() => execute(schema, null)).to.throw(
-      'Must provide document'
-    );
+    // $FlowExpectedError[prop-missing]
+    expect(() => executeSync({ schema })).to.throw('Must provide document.');
   });
 
   it('throws if no schema is provided', () => {
-    expect(() => execute({
-      document: parse('{ field }')
-    })).to.throw(
-      'Must provide schema'
+    const document = parse('{ field }');
+
+    // $FlowExpectedError[prop-missing]
+    expect(() => executeSync({ document })).to.throw(
+      'Expected undefined to be a GraphQL schema.',
     );
   });
 
-  it('accepts an object with named properties as arguments', async () => {
-    const doc = 'query Example { a }';
+  it('throws on invalid variables', () => {
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Type',
+        fields: {
+          fieldA: {
+            type: GraphQLString,
+            args: { argA: { type: GraphQLInt } },
+          },
+        },
+      }),
+    });
+    const document = parse(`
+      query ($a: Int) {
+        fieldA(argA: $a)
+      }
+    `);
+    const variableValues = '{ "a": 1 }';
 
-    const data = 'rootValue';
+    // $FlowExpectedError[incompatible-call]
+    expect(() => executeSync({ schema, document, variableValues })).to.throw(
+      'Variables must be provided as an Object where each property is a variable value. Perhaps look to see if an unparsed JSON string was provided.',
+    );
+  });
 
+  it('accepts positional arguments', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
@@ -57,56 +78,77 @@ describe('Execute: Handles basic execution tasks', () => {
             type: GraphQLString,
             resolve(rootValue) {
               return rootValue;
-            }
-          }
-        }
-      })
+            },
+          },
+        },
+      }),
     });
 
-    const result = await execute({
-      schema,
-      document: parse(doc),
-      rootValue: data
-    });
+    const document = parse('{ a }');
+    const rootValue = 'rootValue';
+    const result = execute(schema, document, rootValue);
 
-    expect(result).to.jsonEqual({
-      data: { a: 'rootValue' }
+    expect(result).to.deep.equal({
+      data: { a: 'rootValue' },
     });
   });
 
-
   it('executes arbitrary code', async () => {
     const data = {
-      a() { return 'Apple'; },
-      b() { return 'Banana'; },
-      c() { return 'Cookie'; },
-      d() { return 'Donut'; },
-      e() { return 'Egg'; },
+      a: () => 'Apple',
+      b: () => 'Banana',
+      c: () => 'Cookie',
+      d: () => 'Donut',
+      e: () => 'Egg',
       f: 'Fish',
-      pic(size) {
-        return 'Pic of size: ' + (size || 50);
-      },
-      deep() { return deepData; },
-      promise() { return promiseData(); }
+      // Called only by DataType::pic static resolver
+      pic: (size: number) => 'Pic of size: ' + size,
+      deep: () => deepData,
+      promise: promiseData,
     };
 
     const deepData = {
-      a() { return 'Already Been Done'; },
-      b() { return 'Boring'; },
-      c() { return [ 'Contrived', undefined, 'Confusing' ]; },
-      deeper() { return [ data, null, data ]; }
+      a: () => 'Already Been Done',
+      b: () => 'Boring',
+      c: () => ['Contrived', undefined, 'Confusing'],
+      deeper: () => [data, null, data],
     };
 
     function promiseData() {
-      return new Promise(resolve => {
-        process.nextTick(() => {
-          resolve(data);
-        });
-      });
+      return Promise.resolve(data);
     }
 
-    const doc = `
-      query Example($size: Int) {
+    const DataType = new GraphQLObjectType({
+      name: 'DataType',
+      fields: () => ({
+        a: { type: GraphQLString },
+        b: { type: GraphQLString },
+        c: { type: GraphQLString },
+        d: { type: GraphQLString },
+        e: { type: GraphQLString },
+        f: { type: GraphQLString },
+        pic: {
+          args: { size: { type: GraphQLInt } },
+          type: GraphQLString,
+          resolve: (obj, { size }) => obj.pic(size),
+        },
+        deep: { type: DeepDataType },
+        promise: { type: DataType },
+      }),
+    });
+
+    const DeepDataType = new GraphQLObjectType({
+      name: 'DeepDataType',
+      fields: {
+        a: { type: GraphQLString },
+        b: { type: GraphQLString },
+        c: { type: new GraphQLList(GraphQLString) },
+        deeper: { type: new GraphQLList(DataType) },
+      },
+    });
+
+    const document = parse(`
+      query ($size: Int) {
         a,
         b,
         x: c
@@ -133,10 +175,16 @@ describe('Execute: Handles basic execution tasks', () => {
         d
         e
       }
-    `;
+    `);
 
-    const ast = parse(doc);
-    const expected = {
+    const result = await execute({
+      schema: new GraphQLSchema({ query: DataType }),
+      document,
+      rootValue: data,
+      variableValues: { size: 100 },
+    });
+
+    expect(result).to.deep.equal({
       data: {
         a: 'Apple',
         b: 'Banana',
@@ -149,53 +197,30 @@ describe('Execute: Handles basic execution tasks', () => {
         deep: {
           a: 'Already Been Done',
           b: 'Boring',
-          c: [ 'Contrived', null, 'Confusing' ],
+          c: ['Contrived', null, 'Confusing'],
           deeper: [
             { a: 'Apple', b: 'Banana' },
             null,
-            { a: 'Apple', b: 'Banana' } ] } }
-    };
-
-    const DataType = new GraphQLObjectType({
-      name: 'DataType',
-      fields: () => ({
-        a: { type: GraphQLString },
-        b: { type: GraphQLString },
-        c: { type: GraphQLString },
-        d: { type: GraphQLString },
-        e: { type: GraphQLString },
-        f: { type: GraphQLString },
-        pic: {
-          args: { size: { type: GraphQLInt } },
-          type: GraphQLString,
-          resolve: (obj, { size }) => obj.pic(size)
+            { a: 'Apple', b: 'Banana' },
+          ],
         },
-        deep: { type: DeepDataType },
-        promise: { type: DataType },
-      })
+      },
     });
-
-    const DeepDataType = new GraphQLObjectType({
-      name: 'DeepDataType',
-      fields: {
-        a: { type: GraphQLString },
-        b: { type: GraphQLString },
-        c: { type: new GraphQLList(GraphQLString) },
-        deeper: { type: new GraphQLList(DataType) },
-      }
-    });
-
-    const schema = new GraphQLSchema({
-      query: DataType
-    });
-
-    expect(
-      await execute(schema, ast, data, null, { size: 100 }, 'Example')
-    ).to.deep.equal(expected);
   });
 
-  it('merges parallel fragments', async () => {
-    const ast = parse(`
+  it('merges parallel fragments', () => {
+    const Type = new GraphQLObjectType({
+      name: 'Type',
+      fields: () => ({
+        a: { type: GraphQLString, resolve: () => 'Apple' },
+        b: { type: GraphQLString, resolve: () => 'Banana' },
+        c: { type: GraphQLString, resolve: () => 'Cherry' },
+        deep: { type: Type, resolve: () => ({}) },
+      }),
+    });
+    const schema = new GraphQLSchema({ query: Type });
+
+    const document = parse(`
       { a, ...FragOne, ...FragTwo }
 
       fragment FragOne on Type {
@@ -209,20 +234,8 @@ describe('Execute: Handles basic execution tasks', () => {
       }
     `);
 
-    const Type = new GraphQLObjectType({
-      name: 'Type',
-      fields: () => ({
-        a: { type: GraphQLString, resolve: () => 'Apple' },
-        b: { type: GraphQLString, resolve: () => 'Banana' },
-        c: { type: GraphQLString, resolve: () => 'Cherry' },
-        deep: { type: Type, resolve: () => ({}) },
-      })
-    });
-    const schema = new GraphQLSchema({ query: Type });
-
-    expect(
-      await execute(schema, ast)
-    ).to.deep.equal({
+    const result = executeSync({ schema, document });
+    expect(result).to.deep.equal({
       data: {
         a: 'Apple',
         b: 'Banana',
@@ -232,34 +245,35 @@ describe('Execute: Handles basic execution tasks', () => {
           c: 'Cherry',
           deeper: {
             b: 'Banana',
-            c: 'Cherry' } } }
+            c: 'Cherry',
+          },
+        },
+      },
     });
   });
 
-  it('provides info about current execution state', async () => {
-    const ast = parse('query ($var: String) { result: test }');
-
-    let info;
-
-    const schema = new GraphQLSchema({
-      query: new GraphQLObjectType({
-        name: 'Test',
-        fields: {
-          test: {
-            type: GraphQLString,
-            resolve(val, args, ctx, _info) {
-              info = _info;
-            }
-          }
-        }
-      })
+  it('provides info about current execution state', () => {
+    let resolvedInfo;
+    const testType = new GraphQLObjectType({
+      name: 'Test',
+      fields: {
+        test: {
+          type: GraphQLString,
+          resolve(_val, _args, _ctx, info) {
+            resolvedInfo = info;
+          },
+        },
+      },
     });
+    const schema = new GraphQLSchema({ query: testType });
 
+    const document = parse('query ($var: String) { result: test }');
     const rootValue = { root: 'val' };
+    const variableValues = { var: 'abc' };
 
-    await execute(schema, ast, rootValue, null, { var: 123 });
+    executeSync({ schema, document, rootValue, variableValues });
 
-    expect(Object.keys(info)).to.deep.equal([
+    expect(resolvedInfo).to.have.all.keys(
       'fieldName',
       'fieldNodes',
       'returnType',
@@ -270,58 +284,112 @@ describe('Execute: Handles basic execution tasks', () => {
       'rootValue',
       'operation',
       'variableValues',
-    ]);
-    expect(info.fieldName).to.equal('test');
-    expect(info.fieldNodes).to.have.lengthOf(1);
-    expect(info.fieldNodes[0]).to.equal(
-      ast.definitions[0].selectionSet.selections[0]
     );
-    expect(info.returnType).to.equal(GraphQLString);
-    expect(info.parentType).to.equal(schema.getQueryType());
-    expect(info.path).to.deep.equal({ prev: undefined, key: 'result' });
-    expect(info.schema).to.equal(schema);
-    expect(info.rootValue).to.equal(rootValue);
-    expect(info.operation).to.equal(ast.definitions[0]);
-    expect(info.variableValues).to.deep.equal({ var: '123' });
+
+    const operation = document.definitions[0];
+    invariant(operation.kind === Kind.OPERATION_DEFINITION);
+
+    expect(resolvedInfo).to.include({
+      fieldName: 'test',
+      returnType: GraphQLString,
+      parentType: testType,
+      schema,
+      rootValue,
+      operation,
+    });
+
+    const field = operation.selectionSet.selections[0];
+    expect(resolvedInfo).to.deep.include({
+      fieldNodes: [field],
+      path: { prev: undefined, key: 'result', typename: 'Test' },
+      variableValues: { var: 'abc' },
+    });
   });
 
-  it('threads root value context correctly', async () => {
-    const doc = 'query Example { a }';
+  it('populates path correctly with complex types', () => {
+    let path;
+    const someObject = new GraphQLObjectType({
+      name: 'SomeObject',
+      fields: {
+        test: {
+          type: GraphQLString,
+          resolve(_val, _args, _ctx, info) {
+            path = info.path;
+          },
+        },
+      },
+    });
+    const someUnion = new GraphQLUnionType({
+      name: 'SomeUnion',
+      types: [someObject],
+      resolveType() {
+        return 'SomeObject';
+      },
+    });
+    const testType = new GraphQLObjectType({
+      name: 'SomeQuery',
+      fields: {
+        test: {
+          type: new GraphQLNonNull(
+            new GraphQLList(new GraphQLNonNull(someUnion)),
+          ),
+        },
+      },
+    });
+    const schema = new GraphQLSchema({ query: testType });
+    const rootValue = { test: [{}] };
+    const document = parse(`
+      query {
+        l1: test {
+          ... on SomeObject {
+            l2: test
+          }
+        }
+      }
+    `);
 
-    const data = {
-      contextThing: 'thing',
-    };
+    executeSync({ schema, document, rootValue });
 
+    expect(path).to.deep.equal({
+      key: 'l2',
+      typename: 'SomeObject',
+      prev: {
+        key: 0,
+        typename: undefined,
+        prev: {
+          key: 'l1',
+          typename: 'SomeQuery',
+          prev: undefined,
+        },
+      },
+    });
+  });
+
+  it('threads root value context correctly', () => {
     let resolvedRootValue;
-
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
         fields: {
           a: {
             type: GraphQLString,
-            resolve(rootValue) {
-              resolvedRootValue = rootValue;
-            }
-          }
-        }
-      })
+            resolve(rootValueArg) {
+              resolvedRootValue = rootValueArg;
+            },
+          },
+        },
+      }),
     });
 
-    await execute(schema, parse(doc), data);
+    const document = parse('query Example { a }');
+    const rootValue = { contextThing: 'thing' };
 
-    expect(resolvedRootValue.contextThing).to.equal('thing');
+    executeSync({ schema, document, rootValue });
+    expect(resolvedRootValue).to.equal(rootValue);
   });
 
-  it('correctly threads arguments', async () => {
-    const doc = `
-      query Example {
-        b(numArg: 123, stringArg: "foo")
-      }
-    `;
-
+  it('correctly threads arguments', () => {
     let resolvedArgs;
-
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
@@ -329,94 +397,28 @@ describe('Execute: Handles basic execution tasks', () => {
           b: {
             args: {
               numArg: { type: GraphQLInt },
-              stringArg: { type: GraphQLString }
+              stringArg: { type: GraphQLString },
             },
             type: GraphQLString,
             resolve(_, args) {
               resolvedArgs = args;
-            }
-          }
-        }
-      })
+            },
+          },
+        },
+      }),
     });
 
-    await execute(schema, parse(doc));
+    const document = parse(`
+      query Example {
+        b(numArg: 123, stringArg: "foo")
+      }
+    `);
 
-    expect(resolvedArgs.numArg).to.equal(123);
-    expect(resolvedArgs.stringArg).to.equal('foo');
+    executeSync({ schema, document });
+    expect(resolvedArgs).to.deep.equal({ numArg: 123, stringArg: 'foo' });
   });
 
   it('nulls out error subtrees', async () => {
-    const doc = `{
-      sync
-      syncError
-      syncRawError
-      syncReturnError
-      syncReturnErrorList
-      async
-      asyncReject
-      asyncRawReject
-      asyncEmptyReject
-      asyncError
-      asyncRawError
-      asyncReturnError
-    }`;
-
-    const data = {
-      sync() {
-        return 'sync';
-      },
-      syncError() {
-        throw new Error('Error getting syncError');
-      },
-      syncRawError() {
-        /* eslint-disable */
-        throw 'Error getting syncRawError';
-        /* eslint-enable */
-      },
-      syncReturnError() {
-        return new Error('Error getting syncReturnError');
-      },
-      syncReturnErrorList() {
-        return [
-          'sync0',
-          new Error('Error getting syncReturnErrorList1'),
-          'sync2',
-          new Error('Error getting syncReturnErrorList3')
-        ];
-      },
-      async() {
-        return new Promise(resolve => resolve('async'));
-      },
-      asyncReject() {
-        return new Promise((_, reject) =>
-          reject(new Error('Error getting asyncReject'))
-        );
-      },
-      asyncRawReject() {
-        return Promise.reject('Error getting asyncRawReject');
-      },
-      asyncEmptyReject() {
-        return Promise.reject();
-      },
-      asyncError() {
-        return new Promise(() => {
-          throw new Error('Error getting asyncError');
-        });
-      },
-      asyncRawError() {
-        return new Promise(() => {
-          /* eslint-disable */
-          throw 'Error getting asyncRawError';
-          /* eslint-enable */
-        });
-      },
-      asyncReturnError() {
-        return Promise.resolve(new Error('Error getting asyncReturnError'));
-      },
-    };
-
-    const ast = parse(doc);
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
@@ -428,71 +430,223 @@ describe('Execute: Handles basic execution tasks', () => {
           syncReturnErrorList: { type: new GraphQLList(GraphQLString) },
           async: { type: GraphQLString },
           asyncReject: { type: GraphQLString },
+          asyncRejectWithExtensions: { type: GraphQLString },
           asyncRawReject: { type: GraphQLString },
           asyncEmptyReject: { type: GraphQLString },
           asyncError: { type: GraphQLString },
           asyncRawError: { type: GraphQLString },
           asyncReturnError: { type: GraphQLString },
-        }
-      })
+          asyncReturnErrorWithExtensions: { type: GraphQLString },
+        },
+      }),
     });
 
-    const result = await execute(schema, ast, data);
+    const document = parse(`
+      {
+        sync
+        syncError
+        syncRawError
+        syncReturnError
+        syncReturnErrorList
+        async
+        asyncReject
+        asyncRawReject
+        asyncEmptyReject
+        asyncError
+        asyncRawError
+        asyncReturnError
+        asyncReturnErrorWithExtensions
+      }
+    `);
 
-    expect(result.data).to.deep.equal({
-      sync: 'sync',
-      syncError: null,
-      syncRawError: null,
-      syncReturnError: null,
-      syncReturnErrorList: [ 'sync0', null, 'sync2', null ],
-      async: 'async',
-      asyncReject: null,
-      asyncRawReject: null,
-      asyncEmptyReject: null,
-      asyncError: null,
-      asyncRawError: null,
-      asyncReturnError: null,
+    const rootValue = {
+      sync() {
+        return 'sync';
+      },
+      syncError() {
+        throw new Error('Error getting syncError');
+      },
+      syncRawError() {
+        // eslint-disable-next-line no-throw-literal
+        throw 'Error getting syncRawError';
+      },
+      syncReturnError() {
+        return new Error('Error getting syncReturnError');
+      },
+      syncReturnErrorList() {
+        return [
+          'sync0',
+          new Error('Error getting syncReturnErrorList1'),
+          'sync2',
+          new Error('Error getting syncReturnErrorList3'),
+        ];
+      },
+      async() {
+        return new Promise((resolve) => resolve('async'));
+      },
+      asyncReject() {
+        return new Promise((_, reject) =>
+          reject(new Error('Error getting asyncReject')),
+        );
+      },
+      asyncRawReject() {
+        // eslint-disable-next-line prefer-promise-reject-errors
+        return Promise.reject('Error getting asyncRawReject');
+      },
+      asyncEmptyReject() {
+        // eslint-disable-next-line prefer-promise-reject-errors
+        return Promise.reject();
+      },
+      asyncError() {
+        return new Promise(() => {
+          throw new Error('Error getting asyncError');
+        });
+      },
+      asyncRawError() {
+        return new Promise(() => {
+          // eslint-disable-next-line no-throw-literal
+          throw 'Error getting asyncRawError';
+        });
+      },
+      asyncReturnError() {
+        return Promise.resolve(new Error('Error getting asyncReturnError'));
+      },
+      asyncReturnErrorWithExtensions() {
+        const error = new Error('Error getting asyncReturnErrorWithExtensions');
+        (error: any).extensions = { foo: 'bar' };
+
+        return Promise.resolve(error);
+      },
+    };
+
+    const result = await execute({ schema, document, rootValue });
+    expect(result).to.deep.equal({
+      data: {
+        sync: 'sync',
+        syncError: null,
+        syncRawError: null,
+        syncReturnError: null,
+        syncReturnErrorList: ['sync0', null, 'sync2', null],
+        async: 'async',
+        asyncReject: null,
+        asyncRawReject: null,
+        asyncEmptyReject: null,
+        asyncError: null,
+        asyncRawError: null,
+        asyncReturnError: null,
+        asyncReturnErrorWithExtensions: null,
+      },
+      errors: [
+        {
+          message: 'Error getting syncError',
+          locations: [{ line: 4, column: 9 }],
+          path: ['syncError'],
+        },
+        {
+          message: 'Unexpected error value: "Error getting syncRawError"',
+          locations: [{ line: 5, column: 9 }],
+          path: ['syncRawError'],
+        },
+        {
+          message: 'Error getting syncReturnError',
+          locations: [{ line: 6, column: 9 }],
+          path: ['syncReturnError'],
+        },
+        {
+          message: 'Error getting syncReturnErrorList1',
+          locations: [{ line: 7, column: 9 }],
+          path: ['syncReturnErrorList', 1],
+        },
+        {
+          message: 'Error getting syncReturnErrorList3',
+          locations: [{ line: 7, column: 9 }],
+          path: ['syncReturnErrorList', 3],
+        },
+        {
+          message: 'Error getting asyncReject',
+          locations: [{ line: 9, column: 9 }],
+          path: ['asyncReject'],
+        },
+        {
+          message: 'Unexpected error value: "Error getting asyncRawReject"',
+          locations: [{ line: 10, column: 9 }],
+          path: ['asyncRawReject'],
+        },
+        {
+          message: 'Unexpected error value: undefined',
+          locations: [{ line: 11, column: 9 }],
+          path: ['asyncEmptyReject'],
+        },
+        {
+          message: 'Error getting asyncError',
+          locations: [{ line: 12, column: 9 }],
+          path: ['asyncError'],
+        },
+        {
+          message: 'Unexpected error value: "Error getting asyncRawError"',
+          locations: [{ line: 13, column: 9 }],
+          path: ['asyncRawError'],
+        },
+        {
+          message: 'Error getting asyncReturnError',
+          locations: [{ line: 14, column: 9 }],
+          path: ['asyncReturnError'],
+        },
+        {
+          message: 'Error getting asyncReturnErrorWithExtensions',
+          locations: [{ line: 15, column: 9 }],
+          path: ['asyncReturnErrorWithExtensions'],
+          extensions: { foo: 'bar' },
+        },
+      ],
     });
-
-    expect(result.errors && result.errors.map(formatError)).to.deep.equal([
-      { message: 'Error getting syncError',
-        locations: [ { line: 3, column: 7 } ],
-        path: [ 'syncError' ] },
-      { message: 'Error getting syncRawError',
-        locations: [ { line: 4, column: 7 } ],
-        path: [ 'syncRawError' ] },
-      { message: 'Error getting syncReturnError',
-        locations: [ { line: 5, column: 7 } ],
-        path: [ 'syncReturnError' ] },
-      { message: 'Error getting syncReturnErrorList1',
-        locations: [ { line: 6, column: 7 } ],
-        path: [ 'syncReturnErrorList', 1 ] },
-      { message: 'Error getting syncReturnErrorList3',
-        locations: [ { line: 6, column: 7 } ],
-        path: [ 'syncReturnErrorList', 3 ] },
-      { message: 'Error getting asyncReject',
-        locations: [ { line: 8, column: 7 } ],
-        path: [ 'asyncReject' ] },
-      { message: 'Error getting asyncRawReject',
-        locations: [ { line: 9, column: 7 } ],
-        path: [ 'asyncRawReject' ] },
-      { message: 'An unknown error occurred.',
-        locations: [ { line: 10, column: 7 } ],
-        path: [ 'asyncEmptyReject' ] },
-      { message: 'Error getting asyncError',
-        locations: [ { line: 11, column: 7 } ],
-        path: [ 'asyncError' ] },
-      { message: 'Error getting asyncRawError',
-        locations: [ { line: 12, column: 7 } ],
-        path: [ 'asyncRawError' ] },
-      { message: 'Error getting asyncReturnError',
-        locations: [ { line: 13, column: 7 } ],
-        path: [ 'asyncReturnError' ] },
-    ]);
   });
 
+  it('nulls error subtree for promise rejection #1071', async () => {
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Query',
+        fields: {
+          foods: {
+            type: new GraphQLList(
+              new GraphQLObjectType({
+                name: 'Food',
+                fields: {
+                  name: { type: GraphQLString },
+                },
+              }),
+            ),
+            resolve() {
+              return Promise.reject(new Error('Oops'));
+            },
+          },
+        },
+      }),
+    });
 
-  it('Full response path is included for non-nullable fields', async () => {
+    const document = parse(`
+      query {
+        foods {
+          name
+        }
+      }
+    `);
+
+    const result = await execute({ schema, document });
+
+    expect(result).to.deep.equal({
+      data: { foods: null },
+      errors: [
+        {
+          locations: [{ column: 9, line: 3 }],
+          message: 'Oops',
+          path: ['foods'],
+        },
+      ],
+    });
+  });
+
+  it('Full response path is included for non-nullable fields', () => {
     const A = new GraphQLObjectType({
       name: 'A',
       fields: () => ({
@@ -512,20 +666,19 @@ describe('Execute: Handles basic execution tasks', () => {
         },
       }),
     });
-    const queryType = new GraphQLObjectType({
-      name: 'query',
-      fields: () => ({
-        nullableA: {
-          type: A,
-          resolve: () => ({})
-        }
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'query',
+        fields: () => ({
+          nullableA: {
+            type: A,
+            resolve: () => ({}),
+          },
+        }),
       }),
     });
-    const schema = new GraphQLSchema({
-      query: queryType,
-    });
 
-    const query = `
+    const document = parse(`
       query {
         nullableA {
           aliasedA: nullableA {
@@ -537,264 +690,246 @@ describe('Execute: Handles basic execution tasks', () => {
           }
         }
       }
-    `;
+    `);
 
-    const result = await execute(schema, parse(query));
+    const result = executeSync({ schema, document });
     expect(result).to.deep.equal({
       data: {
         nullableA: {
-          aliasedA: null
-        }
+          aliasedA: null,
+        },
       },
       errors: [
         {
           message: 'Catch me if you can',
-          locations: [ { line: 7, column: 17 } ],
-          path: [ 'nullableA', 'aliasedA', 'nonNullA', 'anotherA', 'throws' ]
-        }
-      ]
+          locations: [{ line: 7, column: 17 }],
+          path: ['nullableA', 'aliasedA', 'nonNullA', 'anotherA', 'throws'],
+        },
+      ],
     });
   });
 
-  it('uses the inline operation if no operation name is provided', async () => {
-    const doc = '{ a }';
-    const data = { a: 'b' };
-    const ast = parse(doc);
+  it('uses the inline operation if no operation name is provided', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
         fields: {
           a: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
+    const document = parse('{ a }');
+    const rootValue = { a: 'b' };
 
-    const result = await execute(schema, ast, data);
-
+    const result = executeSync({ schema, document, rootValue });
     expect(result).to.deep.equal({ data: { a: 'b' } });
   });
 
-  it('uses the only operation if no operation name is provided', async () => {
-    const doc = 'query Example { a }';
-    const data = { a: 'b' };
-    const ast = parse(doc);
+  it('uses the only operation if no operation name is provided', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
         fields: {
           a: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
+    const document = parse('query Example { a }');
+    const rootValue = { a: 'b' };
 
-    const result = await execute(schema, ast, data);
-
+    const result = executeSync({ schema, document, rootValue });
     expect(result).to.deep.equal({ data: { a: 'b' } });
   });
 
-  it('uses the named operation if operation name is provided', async () => {
-    const doc = 'query Example { first: a } query OtherExample { second: a }';
-    const data = { a: 'b' };
-    const ast = parse(doc);
+  it('uses the named operation if operation name is provided', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
         fields: {
           a: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
 
-    const result = await execute(schema, ast, data, null, null, 'OtherExample');
+    const document = parse(`
+      query Example { first: a }
+      query OtherExample { second: a }
+    `);
+    const rootValue = { a: 'b' };
+    const operationName = 'OtherExample';
 
+    const result = executeSync({ schema, document, rootValue, operationName });
     expect(result).to.deep.equal({ data: { second: 'b' } });
   });
 
-  it('provides error if no operation is provided', async () => {
-    const doc = 'fragment Example on Type { a }';
-    const data = { a: 'b' };
-    const ast = parse(doc);
+  it('provides error if no operation is provided', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
         fields: {
           a: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
+    const document = parse('fragment Example on Type { a }');
+    const rootValue = { a: 'b' };
 
-    const result = await execute(schema, ast, data);
+    const result = executeSync({ schema, document, rootValue });
     expect(result).to.deep.equal({
-      errors: [
-        {
-          message: 'Must provide an operation.',
-          locations: undefined,
-          path: undefined,
-        }
-      ]
+      errors: [{ message: 'Must provide an operation.' }],
     });
   });
 
-  it('errors if no op name is provided with multiple operations', async () => {
-    const doc = 'query Example { a } query OtherExample { a }';
-    const data = { a: 'b' };
-    const ast = parse(doc);
+  it('errors if no op name is provided with multiple operations', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
         fields: {
           a: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
+    const document = parse(`
+      query Example { a }
+      query OtherExample { a }
+    `);
 
-    const result = await execute(schema, ast, data);
+    const result = executeSync({ schema, document });
     expect(result).to.deep.equal({
       errors: [
         {
-          message: 'Must provide operation name if query contains ' +
-            'multiple operations.',
-          locations: undefined,
-          path: undefined,
-        }
-      ]
+          message:
+            'Must provide operation name if query contains multiple operations.',
+        },
+      ],
     });
   });
 
-  it('errors if unknown operation name is provided', async () => {
-    const doc = 'query Example { a } query OtherExample { a }';
-    const ast = parse(doc);
+  it('errors if unknown operation name is provided', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
         fields: {
           a: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
+    const document = parse(`
+      query Example { a }
+      query OtherExample { a }
+    `);
+    const operationName = 'UnknownExample';
 
-    const result = await execute({
-      schema,
-      document: ast,
-      operationName: 'UnknownExample'
-    });
+    const result = executeSync({ schema, document, operationName });
     expect(result).to.deep.equal({
-      errors: [
-        {
-          message: 'Unknown operation named "UnknownExample".',
-          locations: undefined,
-          path: undefined,
-        }
-      ]
+      errors: [{ message: 'Unknown operation named "UnknownExample".' }],
     });
   });
 
-  it('uses the query schema for queries', async () => {
-    const doc = 'query Q { a } mutation M { c } subscription S { a }';
-    const data = { a: 'b', c: 'd' };
-    const ast = parse(doc);
+  it('errors if empty string is provided as operation name', () => {
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Type',
+        fields: {
+          a: { type: GraphQLString },
+        },
+      }),
+    });
+    const document = parse('{ a }');
+    const operationName = '';
+
+    const result = executeSync({ schema, document, operationName });
+    expect(result).to.deep.equal({
+      errors: [{ message: 'Unknown operation named "".' }],
+    });
+  });
+
+  it('uses the query schema for queries', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Q',
         fields: {
           a: { type: GraphQLString },
-        }
+        },
       }),
       mutation: new GraphQLObjectType({
         name: 'M',
         fields: {
           c: { type: GraphQLString },
-        }
+        },
       }),
       subscription: new GraphQLObjectType({
         name: 'S',
         fields: {
           a: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
+    const document = parse(`
+      query Q { a }
+      mutation M { c }
+      subscription S { a }
+    `);
+    const rootValue = { a: 'b', c: 'd' };
+    const operationName = 'Q';
 
-    const queryResult = await execute(schema, ast, data, null, {}, 'Q');
-
-    expect(queryResult).to.deep.equal({ data: { a: 'b' } });
+    const result = executeSync({ schema, document, rootValue, operationName });
+    expect(result).to.deep.equal({ data: { a: 'b' } });
   });
 
-  it('uses the mutation schema for mutations', async () => {
-    const doc = 'query Q { a } mutation M { c }';
-    const data = { a: 'b', c: 'd' };
-    const ast = parse(doc);
+  it('uses the mutation schema for mutations', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Q',
         fields: {
           a: { type: GraphQLString },
-        }
+        },
       }),
       mutation: new GraphQLObjectType({
         name: 'M',
         fields: {
           c: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
+    const document = parse(`
+      query Q { a }
+      mutation M { c }
+    `);
+    const rootValue = { a: 'b', c: 'd' };
+    const operationName = 'M';
 
-    const mutationResult = await execute(schema, ast, data, null, {}, 'M');
-
-    expect(mutationResult).to.deep.equal({ data: { c: 'd' } });
+    const result = executeSync({ schema, document, rootValue, operationName });
+    expect(result).to.deep.equal({ data: { c: 'd' } });
   });
 
-  it('uses the subscription schema for subscriptions', async () => {
-    const doc = 'query Q { a } subscription S { a }';
-    const data = { a: 'b', c: 'd' };
-    const ast = parse(doc);
+  it('uses the subscription schema for subscriptions', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Q',
         fields: {
           a: { type: GraphQLString },
-        }
+        },
       }),
       subscription: new GraphQLObjectType({
         name: 'S',
         fields: {
           a: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
+    const document = parse(`
+      query Q { a }
+      subscription S { a }
+    `);
+    const rootValue = { a: 'b', c: 'd' };
+    const operationName = 'S';
 
-    const subscriptionResult = await execute(schema, ast, data, null, {}, 'S');
-
-    expect(subscriptionResult).to.deep.equal({ data: { a: 'b' } });
+    const result = executeSync({ schema, document, rootValue, operationName });
+    expect(result).to.deep.equal({ data: { a: 'b' } });
   });
 
   it('correct field ordering despite execution order', async () => {
-    const doc = `{
-      a,
-      b,
-      c,
-      d,
-      e
-    }`;
-
-    const data = {
-      a() {
-        return 'a';
-      },
-      b() {
-        return new Promise(resolve => resolve('b'));
-      },
-      c() {
-        return 'c';
-      },
-      d() {
-        return new Promise(resolve => resolve('d'));
-      },
-      e() {
-        return 'e';
-      },
-    };
-
-    const ast = parse(doc);
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
@@ -804,28 +939,35 @@ describe('Execute: Handles basic execution tasks', () => {
           c: { type: GraphQLString },
           d: { type: GraphQLString },
           e: { type: GraphQLString },
-        }
-      })
+        },
+      }),
     });
+    const document = parse('{ a, b, c, d, e }');
+    const rootValue = {
+      a: () => 'a',
+      b: () => new Promise((resolve) => resolve('b')),
+      c: () => 'c',
+      d: () => new Promise((resolve) => resolve('d')),
+      e: () => 'e',
+    };
 
-    const result = await execute(schema, ast, data);
-
+    const result = await execute({ schema, document, rootValue });
     expect(result).to.deep.equal({
-      data: {
-        a: 'a',
-        b: 'b',
-        c: 'c',
-        d: 'd',
-        e: 'e',
-      }
+      data: { a: 'a', b: 'b', c: 'c', d: 'd', e: 'e' },
     });
-
-    expect(Object.keys(result.data)).to.deep.equal([ 'a', 'b', 'c', 'd', 'e' ]);
   });
 
-  it('Avoids recursion', async () => {
-    const doc = `
-      query Q {
+  it('Avoids recursion', () => {
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Type',
+        fields: {
+          a: { type: GraphQLString },
+        },
+      }),
+    });
+    const document = parse(`
+      {
         a
         ...Frag
         ...Frag
@@ -835,59 +977,64 @@ describe('Execute: Handles basic execution tasks', () => {
         a,
         ...Frag
       }
-    `;
-    const data = { a: 'b' };
-    const ast = parse(doc);
-    const schema = new GraphQLSchema({
-      query: new GraphQLObjectType({
-        name: 'Type',
-        fields: {
-          a: { type: GraphQLString },
-        }
-      }),
+    `);
+    const rootValue = { a: 'b' };
+
+    const result = executeSync({ schema, document, rootValue });
+    expect(result).to.deep.equal({
+      data: { a: 'b' },
     });
-
-    const queryResult = await execute(schema, ast, data, null, {}, 'Q');
-
-    expect(queryResult).to.deep.equal({ data: { a: 'b' } });
   });
 
-  it('does not include illegal fields in output', async () => {
-    const doc = `mutation M {
-      thisIsIllegalDontIncludeMe
-    }`;
-    const ast = parse(doc);
+  it('ignores missing sub selections on fields', () => {
+    const someType = new GraphQLObjectType({
+      name: 'SomeType',
+      fields: {
+        b: { type: GraphQLString },
+      },
+    });
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Query',
+        fields: {
+          a: { type: someType },
+        },
+      }),
+    });
+    const document = parse('{ a }');
+    const rootValue = { a: { b: 'c' } };
+
+    const result = executeSync({ schema, document, rootValue });
+    expect(result).to.deep.equal({
+      data: { a: {} },
+    });
+  });
+
+  it('does not include illegal fields in output', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Q',
         fields: {
           a: { type: GraphQLString },
-        }
-      }),
-      mutation: new GraphQLObjectType({
-        name: 'M',
-        fields: {
-          c: { type: GraphQLString },
-        }
+        },
       }),
     });
+    const document = parse('{ thisIsIllegalDoNotIncludeMe }');
 
-    const mutationResult = await execute(schema, ast);
-
-    expect(mutationResult).to.deep.equal({
-      data: {
-      }
+    const result = executeSync({ schema, document });
+    expect(result).to.deep.equal({
+      data: {},
     });
   });
 
-  it('does not include arguments that were not set', async () => {
+  it('does not include arguments that were not set', () => {
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Type',
         fields: {
           field: {
             type: GraphQLString,
-            resolve: (data, args) => args && JSON.stringify(args),
+            resolve: (_source, args) => inspect(args),
             args: {
               a: { type: GraphQLBoolean },
               b: { type: GraphQLBoolean },
@@ -895,133 +1042,205 @@ describe('Execute: Handles basic execution tasks', () => {
               d: { type: GraphQLInt },
               e: { type: GraphQLInt },
             },
-          }
-        }
-      })
+          },
+        },
+      }),
     });
+    const document = parse('{ field(a: true, c: false, e: 0) }');
 
-    const query = parse('{ field(a: true, c: false, e: 0) }');
-    const result = await execute(schema, query);
-
+    const result = executeSync({ schema, document });
     expect(result).to.deep.equal({
       data: {
-        field: '{"a":true,"c":false,"e":0}'
-      }
+        field: '{ a: true, c: false, e: 0 }',
+      },
     });
   });
 
   it('fails when an isTypeOf check is not met', async () => {
     class Special {
-      constructor(value) {
+      value: string;
+
+      constructor(value: string) {
         this.value = value;
       }
     }
 
     class NotSpecial {
-      constructor(value) {
+      value: string;
+
+      constructor(value: string) {
         this.value = value;
       }
     }
 
     const SpecialType = new GraphQLObjectType({
       name: 'SpecialType',
-      isTypeOf(obj) {
-        return obj instanceof Special;
+      isTypeOf(obj, context) {
+        const result = obj instanceof Special;
+        return context?.async ? Promise.resolve(result) : result;
       },
-      fields: {
-        value: { type: GraphQLString }
-      }
+      fields: { value: { type: GraphQLString } },
     });
 
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Query',
         fields: {
-          specials: {
-            type: new GraphQLList(SpecialType),
-            resolve: rootValue => rootValue.specials
-          }
-        }
-      })
+          specials: { type: new GraphQLList(SpecialType) },
+        },
+      }),
     });
 
-    const query = parse('{ specials { value } }');
-    const value = {
-      specials: [ new Special('foo'), new NotSpecial('bar') ]
+    const document = parse('{ specials { value } }');
+    const rootValue = {
+      specials: [new Special('foo'), new NotSpecial('bar')],
     };
-    const result = await execute(schema, query, value);
 
-    expect(result.data).to.deep.equal({
-      specials: [
-        { value: 'foo' },
-        null
-      ]
-    });
-    expect(result.errors).to.have.lengthOf(1);
-    expect(result.errors).to.containSubset([
-      { message:
-          'Expected value of type "SpecialType" but got: [object Object].',
-        locations: [ { line: 1, column: 3 } ] }
-    ]);
-  });
-
-  it('fails to execute a query containing a type definition', async () => {
-    const query = parse(`
-      { foo }
-
-      type Query { foo: String }
-    `);
-
-    const schema = new GraphQLSchema({
-      query: new GraphQLObjectType({
-        name: 'Query',
-        fields: {
-          foo: { type: GraphQLString }
-        }
-      })
-    });
-
-    const result = await execute(schema, query);
+    const result = executeSync({ schema, document, rootValue });
     expect(result).to.deep.equal({
+      data: {
+        specials: [{ value: 'foo' }, null],
+      },
       errors: [
         {
-          message: 'GraphQL cannot execute a request containing a ' +
-            'ObjectTypeDefinition.',
-          locations: [ { line: 4, column: 7 } ],
-          path: undefined,
-        }
-      ]
+          message:
+            'Expected value of type "SpecialType" but got: { value: "bar" }.',
+          locations: [{ line: 1, column: 3 }],
+          path: ['specials', 1],
+        },
+      ],
+    });
+
+    const contextValue = { async: true };
+    const asyncResult = await execute({
+      schema,
+      document,
+      rootValue,
+      contextValue,
+    });
+    expect(asyncResult).to.deep.equal(result);
+  });
+
+  it('fails when serialize of custom scalar does not return a value', () => {
+    const customScalar = new GraphQLScalarType({
+      name: 'CustomScalar',
+      serialize() {
+        /* returns nothing */
+      },
+    });
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Query',
+        fields: {
+          customScalar: {
+            type: customScalar,
+            resolve: () => 'CUSTOM_VALUE',
+          },
+        },
+      }),
+    });
+
+    const result = executeSync({ schema, document: parse('{ customScalar }') });
+    expect(result).to.deep.equal({
+      data: { customScalar: null },
+      errors: [
+        {
+          message:
+            'Expected a value of type "CustomScalar" but received: "CUSTOM_VALUE"',
+          locations: [{ line: 1, column: 3 }],
+          path: ['customScalar'],
+        },
+      ],
     });
   });
 
-  it('uses a custom field resolver', async () => {
-    const query = parse('{ foo }');
+  it('executes ignoring invalid non-executable definitions', () => {
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Query',
+        fields: {
+          foo: { type: GraphQLString },
+        },
+      }),
+    });
+
+    const document = parse(`
+      { foo }
+
+      type Query { bar: String }
+    `);
+
+    const result = executeSync({ schema, document });
+    expect(result).to.deep.equal({ data: { foo: null } });
+  });
+
+  it('uses a custom field resolver', () => {
+    const schema = new GraphQLSchema({
+      query: new GraphQLObjectType({
+        name: 'Query',
+        fields: {
+          foo: { type: GraphQLString },
+        },
+      }),
+    });
+    const document = parse('{ foo }');
+
+    const result = executeSync({
+      schema,
+      document,
+      fieldResolver(_source, _args, _context, info) {
+        // For the purposes of test, just return the name of the field!
+        return info.fieldName;
+      },
+    });
+
+    expect(result).to.deep.equal({ data: { foo: 'foo' } });
+  });
+
+  it('uses a custom type resolver', () => {
+    const document = parse('{ foo { bar } }');
+
+    const fooInterface = new GraphQLInterfaceType({
+      name: 'FooInterface',
+      fields: {
+        bar: { type: GraphQLString },
+      },
+    });
+
+    const fooObject = new GraphQLObjectType({
+      name: 'FooObject',
+      interfaces: [fooInterface],
+      fields: {
+        bar: { type: GraphQLString },
+      },
+    });
 
     const schema = new GraphQLSchema({
       query: new GraphQLObjectType({
         name: 'Query',
         fields: {
-          foo: { type: GraphQLString }
-        }
-      })
+          foo: { type: fooInterface },
+        },
+      }),
+      types: [fooObject],
     });
 
-    // For the purposes of test, just return the name of the field!
-    function customResolver(source, args, context, info) {
-      return info.fieldName;
-    }
+    const rootValue = { foo: { bar: 'bar' } };
 
-    const result = await execute(
+    let possibleTypes;
+    const result = executeSync({
       schema,
-      query,
-      null,
-      null,
-      null,
-      null,
-      customResolver
-    );
+      document,
+      rootValue,
+      typeResolver(_source, _context, info, abstractType) {
+        // Resolver should be able to figure out all possible types on its own
+        possibleTypes = info.schema.getPossibleTypes(abstractType);
 
-    expect(result).to.jsonEqual({ data: { foo: 'foo' } });
+        return 'FooObject';
+      },
+    });
+
+    expect(result).to.deep.equal({ data: { foo: { bar: 'bar' } } });
+    expect(possibleTypes).to.deep.equal([fooObject]);
   });
-
 });

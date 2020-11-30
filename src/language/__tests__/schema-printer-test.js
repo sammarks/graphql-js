@@ -1,125 +1,176 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
-import { readFileSync } from 'fs';
-import { join } from 'path';
+
+import dedent from '../../__testUtils__/dedent';
+import kitchenSinkSDL from '../../__testUtils__/kitchenSinkSDL';
+
 import { parse } from '../parser';
 import { print } from '../printer';
 
-describe('Printer', () => {
-
+describe('Printer: SDL document', () => {
   it('prints minimal ast', () => {
     const ast = {
       kind: 'ScalarTypeDefinition',
-      name: { kind: 'Name', value: 'foo' }
+      name: { kind: 'Name', value: 'foo' },
     };
     expect(print(ast)).to.equal('scalar foo');
   });
 
   it('produces helpful error messages', () => {
-    const badAst1 = { random: 'Data' };
-    expect(() => print(badAst1)).to.throw(
-      'Invalid AST Node: {"random":"Data"}'
+    const badAST = { random: 'Data' };
+
+    // $FlowExpectedError[incompatible-call]
+    expect(() => print(badAST)).to.throw(
+      'Invalid AST Node: { random: "Data" }.',
     );
   });
 
-  const kitchenSink = readFileSync(
-    join(__dirname, '/schema-kitchen-sink.graphql'),
-    { encoding: 'utf8' }
-  );
-
   it('does not alter ast', () => {
-    const ast = parse(kitchenSink);
+    const ast = parse(kitchenSinkSDL);
     const astBefore = JSON.stringify(ast);
     print(ast);
     expect(JSON.stringify(ast)).to.equal(astBefore);
   });
 
   it('prints kitchen sink', () => {
+    const printed = print(parse(kitchenSinkSDL));
 
-    const ast = parse(kitchenSink);
+    expect(printed).to.equal(dedent`
+      """This is a description of the schema as a whole."""
+      schema {
+        query: QueryType
+        mutation: MutationType
+      }
 
-    const printed = print(ast);
+      """
+      This is a description
+      of the \`Foo\` type.
+      """
+      type Foo implements Bar & Baz & Two {
+        "Description of the \`one\` field."
+        one: Type
+        """This is a description of the \`two\` field."""
+        two(
+          """This is a description of the \`argument\` argument."""
+          argument: InputType!
+        ): Type
+        """This is a description of the \`three\` field."""
+        three(argument: InputType, other: String): Int
+        four(argument: String = "string"): String
+        five(argument: [String] = ["string", "string"]): String
+        six(argument: InputType = {key: "value"}): Type
+        seven(argument: Int = null): Type
+      }
 
-    /* eslint-disable max-len */
-    expect(printed).to.equal(
-`schema {
-  query: QueryType
-  mutation: MutationType
-}
+      type AnnotatedObject @onObject(arg: "value") {
+        annotatedField(arg: Type = "default" @onArgumentDefinition): Type @onField
+      }
 
-type Foo implements Bar {
-  one: Type
-  two(argument: InputType!): Type
-  three(argument: InputType, other: String): Int
-  four(argument: String = "string"): String
-  five(argument: [String] = ["string", "string"]): String
-  six(argument: InputType = {key: "value"}): Type
-  seven(argument: Int = null): Type
-}
+      type UndefinedType
 
-type AnnotatedObject @onObject(arg: "value") {
-  annotatedField(arg: Type = "default" @onArg): Type @onField
-}
+      extend type Foo {
+        seven(argument: [String]): Type
+      }
 
-interface Bar {
-  one: Type
-  four(argument: String = "string"): String
-}
+      extend type Foo @onType
 
-interface AnnotatedInterface @onInterface {
-  annotatedField(arg: Type @onArg): Type @onField
-}
+      interface Bar {
+        one: Type
+        four(argument: String = "string"): String
+      }
 
-union Feed = Story | Article | Advert
+      interface AnnotatedInterface @onInterface {
+        annotatedField(arg: Type @onArgumentDefinition): Type @onField
+      }
 
-union AnnotatedUnion @onUnion = A | B
+      interface UndefinedInterface
 
-union AnnotatedUnionTwo @onUnion = A | B
+      extend interface Bar implements Two {
+        two(argument: InputType!): Type
+      }
 
-scalar CustomScalar
+      extend interface Bar @onInterface
 
-scalar AnnotatedScalar @onScalar
+      interface Baz implements Bar & Two {
+        one: Type
+        two(argument: InputType!): Type
+        four(argument: String = "string"): String
+      }
 
-enum Site {
-  DESKTOP
-  MOBILE
-}
+      union Feed = Story | Article | Advert
 
-enum AnnotatedEnum @onEnum {
-  ANNOTATED_VALUE @onEnumValue
-  OTHER_VALUE
-}
+      union AnnotatedUnion @onUnion = A | B
 
-input InputType {
-  key: String!
-  answer: Int = 42
-}
+      union AnnotatedUnionTwo @onUnion = A | B
 
-input AnnotatedInput @onInputObjectType {
-  annotatedField: Type @onField
-}
+      union UndefinedUnion
 
-extend type Foo {
-  seven(argument: [String]): Type
-}
+      extend union Feed = Photo | Video
 
-extend type Foo @onType {}
+      extend union Feed @onUnion
 
-type NoFields {}
+      scalar CustomScalar
 
-directive @skip(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+      scalar AnnotatedScalar @onScalar
 
-directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+      extend scalar CustomScalar @onScalar
 
-directive @include2(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
-`);
+      enum Site {
+        """This is a description of the \`DESKTOP\` value"""
+        DESKTOP
+        """This is a description of the \`MOBILE\` value"""
+        MOBILE
+        "This is a description of the \`WEB\` value"
+        WEB
+      }
 
+      enum AnnotatedEnum @onEnum {
+        ANNOTATED_VALUE @onEnumValue
+        OTHER_VALUE
+      }
+
+      enum UndefinedEnum
+
+      extend enum Site {
+        VR
+      }
+
+      extend enum Site @onEnum
+
+      input InputType {
+        key: String!
+        answer: Int = 42
+      }
+
+      input AnnotatedInput @onInputObject {
+        annotatedField: Type @onInputFieldDefinition
+      }
+
+      input UndefinedInput
+
+      extend input InputType {
+        other: Float = 1.23e4 @onInputFieldDefinition
+      }
+
+      extend input InputType @onInputObject
+
+      """This is a description of the \`@skip\` directive"""
+      directive @skip(
+        """This is a description of the \`if\` argument"""
+        if: Boolean! @onArgumentDefinition
+      ) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+      directive @include(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+      directive @include2(if: Boolean!) on FIELD | FRAGMENT_SPREAD | INLINE_FRAGMENT
+
+      directive @myRepeatableDir(name: String!) repeatable on OBJECT | INTERFACE
+
+      extend schema @onSchema
+
+      extend schema @onSchema {
+        subscription: SubscriptionType
+      }
+    `);
   });
 });

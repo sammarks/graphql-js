@@ -1,28 +1,38 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
 
-import { parse, Source, GraphQLError, formatError } from '../../';
+import dedent from '../../__testUtils__/dedent';
 
+import invariant from '../../jsutils/invariant';
+
+import { Kind } from '../../language/kinds';
+import { parse } from '../../language/parser';
+import { Source } from '../../language/source';
+
+import { GraphQLError, printError } from '../GraphQLError';
+
+const source = new Source(dedent`
+  {
+    field
+  }
+`);
+const ast = parse(source);
+const operationNode = ast.definitions[0];
+invariant(operationNode.kind === Kind.OPERATION_DEFINITION);
+const fieldNode = operationNode.selectionSet.selections[0];
+invariant(fieldNode);
 
 describe('GraphQLError', () => {
-
   it('is a class and is a subclass of Error', () => {
-    expect(new GraphQLError()).to.be.instanceof(Error);
-    expect(new GraphQLError()).to.be.instanceof(GraphQLError);
+    expect(new GraphQLError('str')).to.be.instanceof(Error);
+    expect(new GraphQLError('str')).to.be.instanceof(GraphQLError);
   });
 
   it('has a name, message, and stack trace', () => {
     const e = new GraphQLError('msg');
-    expect(e.name).to.equal('GraphQLError');
+
+    expect(e).to.include({ name: 'GraphQLError', message: 'msg' });
     expect(e.stack).to.be.a('string');
-    expect(e.message).to.equal('msg');
   });
 
   it('uses the stack of an original error', () => {
@@ -33,65 +43,67 @@ describe('GraphQLError', () => {
       undefined,
       undefined,
       undefined,
-      original
+      original,
     );
-    expect(e.name).to.equal('GraphQLError');
-    expect(e.stack).to.equal(original.stack);
-    expect(e.message).to.equal('msg');
-    expect(e.originalError).to.equal(original);
+
+    expect(e).to.include({
+      name: 'GraphQLError',
+      message: 'msg',
+      stack: original.stack,
+      originalError: original,
+    });
   });
 
   it('creates new stack if original error has no stack', () => {
-    const original = { message: 'original' };
-    const e = new GraphQLError(
-      'msg',
-      null,
-      null,
-      null,
-      null,
-      original
-    );
-    expect(e.name).to.equal('GraphQLError');
+    const original = new Error('original');
+    const e = new GraphQLError('msg', null, null, null, null, original);
+
+    expect(e).to.include({
+      name: 'GraphQLError',
+      message: 'msg',
+      originalError: original,
+    });
     expect(e.stack).to.be.a('string');
-    expect(e.message).to.equal('msg');
-    expect(e.originalError).to.equal(original);
   });
 
   it('converts nodes to positions and locations', () => {
-    const source = new Source(`{
-      field
-    }`);
-    const ast = parse(source);
-    const fieldNode = ast.definitions[0].selectionSet.selections[0];
-    const e = new GraphQLError('msg', [ fieldNode ]);
-    expect(e.nodes).to.deep.equal([ fieldNode ]);
-    expect(e.source).to.equal(source);
-    expect(e.positions).to.deep.equal([ 8 ]);
-    expect(e.locations).to.deep.equal([ { line: 2, column: 7 } ]);
+    const e = new GraphQLError('msg', [fieldNode]);
+    expect(e).to.have.property('source', source);
+    expect(e).to.deep.include({
+      nodes: [fieldNode],
+      positions: [4],
+      locations: [{ line: 2, column: 3 }],
+    });
+  });
+
+  it('converts single node to positions and locations', () => {
+    const e = new GraphQLError('msg', fieldNode); // Non-array value.
+    expect(e).to.have.property('source', source);
+    expect(e).to.deep.include({
+      nodes: [fieldNode],
+      positions: [4],
+      locations: [{ line: 2, column: 3 }],
+    });
   });
 
   it('converts node with loc.start === 0 to positions and locations', () => {
-    const source = new Source(`{
-      field
-    }`);
-    const ast = parse(source);
-    const operationNode = ast.definitions[0];
-    const e = new GraphQLError('msg', [ operationNode ]);
-    expect(e.nodes).to.deep.equal([ operationNode ]);
-    expect(e.source).to.equal(source);
-    expect(e.positions).to.deep.equal([ 0 ]);
-    expect(e.locations).to.deep.equal([ { line: 1, column: 1 } ]);
+    const e = new GraphQLError('msg', operationNode);
+    expect(e).to.have.property('source', source);
+    expect(e).to.deep.include({
+      nodes: [operationNode],
+      positions: [0],
+      locations: [{ line: 1, column: 1 }],
+    });
   });
 
   it('converts source and positions to locations', () => {
-    const source = new Source(`{
-      field
-    }`);
-    const e = new GraphQLError('msg', null, source, [ 10 ]);
-    expect(e.nodes).to.equal(undefined);
-    expect(e.source).to.equal(source);
-    expect(e.positions).to.deep.equal([ 10 ]);
-    expect(e.locations).to.deep.equal([ { line: 2, column: 9 } ]);
+    const e = new GraphQLError('msg', null, source, [6]);
+    expect(e).to.have.property('source', source);
+    expect(e).to.deep.include({
+      nodes: undefined,
+      positions: [6],
+      locations: [{ line: 2, column: 5 }],
+    });
   });
 
   it('serializes to include message', () => {
@@ -100,41 +112,90 @@ describe('GraphQLError', () => {
   });
 
   it('serializes to include message and locations', () => {
-    const node = parse('{ field }').definitions[0].selectionSet.selections[0];
-    const e = new GraphQLError('msg', [ node ]);
+    const e = new GraphQLError('msg', fieldNode);
     expect(JSON.stringify(e)).to.equal(
-      '{"message":"msg","locations":[{"line":1,"column":3}]}'
+      '{"message":"msg","locations":[{"line":2,"column":3}]}',
     );
   });
 
   it('serializes to include path', () => {
-    const e = new GraphQLError(
-      'msg',
-      null,
-      null,
-      null,
-      [ 'path', 3, 'to', 'field' ]
-    );
-    expect(e.path).to.deep.equal([ 'path', 3, 'to', 'field' ]);
+    const e = new GraphQLError('msg', null, null, null, [
+      'path',
+      3,
+      'to',
+      'field',
+    ]);
+    expect(e).to.have.deep.property('path', ['path', 3, 'to', 'field']);
     expect(JSON.stringify(e)).to.equal(
-      '{"message":"msg","path":["path",3,"to","field"]}'
+      '{"message":"msg","path":["path",3,"to","field"]}',
+    );
+  });
+});
+
+describe('printError', () => {
+  it('prints an error without location', () => {
+    const error = new GraphQLError('Error without location');
+    expect(printError(error)).to.equal('Error without location');
+  });
+
+  it('prints an error using node without location', () => {
+    const error = new GraphQLError(
+      'Error attached to node without location',
+      parse('{ foo }', { noLocation: true }),
+    );
+    expect(printError(error)).to.equal(
+      'Error attached to node without location',
     );
   });
 
-  it('default error formatter includes path', () => {
-    const e = new GraphQLError(
-      'msg',
-      null,
-      null,
-      null,
-      [ 'path', 3, 'to', 'field' ]
+  it('prints an error with nodes from different sources', () => {
+    const docA = parse(
+      new Source(
+        dedent`
+          type Foo {
+            field: String
+          }
+        `,
+        'SourceA',
+      ),
     );
+    const opA = docA.definitions[0];
+    invariant(opA.kind === Kind.OBJECT_TYPE_DEFINITION && opA.fields);
+    const fieldA = opA.fields[0];
 
-    expect(formatError(e)).to.deep.equal({
-      message: 'msg',
-      locations: undefined,
-      path: [ 'path', 3, 'to', 'field' ]
-    });
+    const docB = parse(
+      new Source(
+        dedent`
+          type Foo {
+            field: Int
+          }
+        `,
+        'SourceB',
+      ),
+    );
+    const opB = docB.definitions[0];
+    invariant(opB.kind === Kind.OBJECT_TYPE_DEFINITION && opB.fields);
+    const fieldB = opB.fields[0];
+
+    const error = new GraphQLError('Example error with two nodes', [
+      fieldA.type,
+      fieldB.type,
+    ]);
+
+    expect(printError(error) + '\n').to.equal(dedent`
+      Example error with two nodes
+
+      SourceA:2:10
+      1 | type Foo {
+      2 |   field: String
+        |          ^
+      3 | }
+
+      SourceB:2:10
+      1 | type Foo {
+      2 |   field: Int
+        |          ^
+      3 | }
+    `);
   });
-
 });

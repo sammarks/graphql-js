@@ -1,39 +1,67 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- *
- * @flow
- */
-
 import { expect } from 'chai';
 import { describe, it } from 'mocha';
+
 import mapAsyncIterator from '../mapAsyncIterator';
 
 describe('mapAsyncIterator', () => {
-
-  it('maps over async values', async () => {
+  it('maps over async generator', async () => {
     async function* source() {
       yield 1;
       yield 2;
       yield 3;
     }
 
-    const doubles = mapAsyncIterator(source(), x => x + x);
+    const doubles = mapAsyncIterator(source(), (x) => x + x);
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 2, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 4, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 6, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
+    expect(await doubles.next()).to.deep.equal({ value: 2, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 4, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 6, done: false });
+    expect(await doubles.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
+  });
+
+  it('maps over async iterator', async () => {
+    const items = [1, 2, 3];
+
+    const iterator: any = {
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      next() {
+        return Promise.resolve({
+          done: items.length === 0,
+          value: items.shift(),
+        });
+      },
+    };
+
+    const doubles = mapAsyncIterator(iterator, (x) => x + x);
+
+    expect(await doubles.next()).to.deep.equal({ value: 2, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 4, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 6, done: false });
+    expect(await doubles.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
+  });
+
+  it('compatible with for-await-of', async () => {
+    async function* source() {
+      yield 1;
+      yield 2;
+      yield 3;
+    }
+
+    const doubles = mapAsyncIterator(source(), (x) => x + x);
+
+    const result = [];
+    for await (const x of doubles) {
+      result.push(x);
+    }
+    expect(result).to.deep.equal([2, 4, 6]);
   });
 
   it('maps over async values with async function', async () => {
@@ -44,51 +72,76 @@ describe('mapAsyncIterator', () => {
     }
 
     // Flow test: this is *not* AsyncIterator<Promise<number>>
-    const doubles: AsyncIterator<number> =
-      mapAsyncIterator(source(), async x => await x + x);
+    const doubles: AsyncIterator<number> = mapAsyncIterator(
+      source(),
+      async (x) => (await x) + x,
+    );
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 2, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 4, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 6, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
+    expect(await doubles.next()).to.deep.equal({ value: 2, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 4, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 6, done: false });
+    expect(await doubles.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
   });
 
-  it('allows returning early from async values', async () => {
+  it('allows returning early from mapped async generator', async () => {
     async function* source() {
       yield 1;
       yield 2;
+
+      // istanbul ignore next (Shouldn't be reached)
       yield 3;
     }
 
-    const doubles = mapAsyncIterator(source(), x => x + x);
+    const doubles = mapAsyncIterator(source(), (x) => x + x);
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 2, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 4, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 2, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 4, done: false });
 
     // Early return
-    expect(
-      await doubles.return()
-    ).to.deep.equal({ value: undefined, done: true });
+    expect(await doubles.return()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
 
-    // Subsequent nexts
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
+    // Subsequent next calls
+    expect(await doubles.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
+    expect(await doubles.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
+  });
+
+  it('allows returning early from mapped async iterator', async () => {
+    const items = [1, 2, 3];
+
+    const iterator: any = {
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      next() {
+        return Promise.resolve({
+          done: items.length === 0,
+          value: items.shift(),
+        });
+      },
+    };
+
+    const doubles = mapAsyncIterator(iterator, (x) => x + x);
+
+    expect(await doubles.next()).to.deep.equal({ value: 2, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 4, done: false });
+
+    // Early return
+    expect(await doubles.return()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
   });
 
   it('passes through early return from async values', async () => {
@@ -96,51 +149,56 @@ describe('mapAsyncIterator', () => {
       try {
         yield 1;
         yield 2;
+
+        // istanbul ignore next (Shouldn't be reached)
         yield 3;
       } finally {
-        yield 'done';
-        yield 'last';
+        yield 'Done';
+        yield 'Last';
       }
     }
 
-    const doubles = mapAsyncIterator(source(), x => x + x);
+    const doubles = mapAsyncIterator(source(), (x) => x + x);
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 2, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 4, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 2, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 4, done: false });
 
     // Early return
-    expect(
-      await doubles.return()
-    ).to.deep.equal({ value: 'donedone', done: false });
+    expect(await doubles.return()).to.deep.equal({
+      value: 'DoneDone',
+      done: false,
+    });
 
-    // Subsequent nexts may yield from finally block
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 'lastlast', done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
+    // Subsequent next calls may yield from finally block
+    expect(await doubles.next()).to.deep.equal({
+      value: 'LastLast',
+      done: false,
+    });
+    expect(await doubles.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
   });
 
-  it('allows throwing errors through async generators', async () => {
-    async function* source() {
-      yield 1;
-      yield 2;
-      yield 3;
-    }
+  it('allows throwing errors through async iterators', async () => {
+    const items = [1, 2, 3];
 
-    const doubles = mapAsyncIterator(source(), x => x + x);
+    const iterator: any = {
+      [Symbol.asyncIterator]() {
+        return this;
+      },
+      next() {
+        return Promise.resolve({
+          done: items.length === 0,
+          value: items.shift(),
+        });
+      },
+    };
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 2, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 4, done: false });
+    const doubles = mapAsyncIterator(iterator, (x) => x + x);
+
+    expect(await doubles.next()).to.deep.equal({ value: 2, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 4, done: false });
 
     // Throw error
     let caughtError;
@@ -150,13 +208,6 @@ describe('mapAsyncIterator', () => {
       caughtError = e;
     }
     expect(caughtError).to.equal('ouch');
-
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
   });
 
   it('passes through caught errors through async generators', async () => {
@@ -164,32 +215,33 @@ describe('mapAsyncIterator', () => {
       try {
         yield 1;
         yield 2;
+
+        // istanbul ignore next (Shouldn't be reached)
         yield 3;
       } catch (e) {
         yield e;
       }
     }
 
-    const doubles = mapAsyncIterator(source(), x => x + x);
+    const doubles = mapAsyncIterator(source(), (x) => x + x);
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 2, done: false });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 4, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 2, done: false });
+    expect(await doubles.next()).to.deep.equal({ value: 4, done: false });
 
     // Throw error
-    expect(
-      await doubles.throw('ouch')
-    ).to.deep.equal({ value: 'ouchouch', done: false });
+    expect(await doubles.throw('Ouch')).to.deep.equal({
+      value: 'OuchOuch',
+      done: false,
+    });
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
+    expect(await doubles.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
+    expect(await doubles.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
   });
 
   it('does not normally map over thrown errors', async () => {
@@ -198,11 +250,12 @@ describe('mapAsyncIterator', () => {
       throw new Error('Goodbye');
     }
 
-    const doubles = mapAsyncIterator(source(), x => x + x);
+    const doubles = mapAsyncIterator(source(), (x) => x + x);
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 'HelloHello', done: false });
+    expect(await doubles.next()).to.deep.equal({
+      value: 'HelloHello',
+      done: false,
+    });
 
     let caughtError;
     try {
@@ -210,7 +263,10 @@ describe('mapAsyncIterator', () => {
     } catch (e) {
       caughtError = e;
     }
-    expect(caughtError && caughtError.message).to.equal('Goodbye');
+
+    expect(caughtError)
+      .to.be.an.instanceOf(Error)
+      .with.property('message', 'Goodbye');
   });
 
   it('maps over thrown errors if second callback provided', async () => {
@@ -221,31 +277,36 @@ describe('mapAsyncIterator', () => {
 
     const doubles = mapAsyncIterator(
       source(),
-      x => x + x,
-      error => error
+      (x) => x + x,
+      (error) => error,
     );
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: 'HelloHello', done: false });
+    expect(await doubles.next()).to.deep.equal({
+      value: 'HelloHello',
+      done: false,
+    });
 
     const result = await doubles.next();
-    expect(result.value).to.be.instanceof(Error);
-    expect(result.value && result.value.message).to.equal('Goodbye');
+    expect(result.value)
+      .to.be.an.instanceOf(Error)
+      .with.property('message', 'Goodbye');
     expect(result.done).to.equal(false);
 
-    expect(
-      await doubles.next()
-    ).to.deep.equal({ value: undefined, done: true });
+    expect(await doubles.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
   });
 
-  async function testClosesSourceWithMapper(mapper) {
+  async function testClosesSourceWithMapper<T>(mapper: (number) => T) {
     let didVisitFinally = false;
 
     async function* source() {
       try {
         yield 1;
         yield 2;
+
+        // istanbul ignore next (Shouldn't be reached)
         yield 3;
       } finally {
         didVisitFinally = true;
@@ -255,9 +316,7 @@ describe('mapAsyncIterator', () => {
 
     const throwOver1 = mapAsyncIterator(source(), mapper);
 
-    expect(
-      await throwOver1.next()
-    ).to.deep.equal({ value: 1, done: false });
+    expect(await throwOver1.next()).to.deep.equal({ value: 1, done: false });
 
     let expectedError;
     try {
@@ -266,20 +325,20 @@ describe('mapAsyncIterator', () => {
       expectedError = error;
     }
 
-    expect(expectedError).to.be.an('error');
-    if (expectedError) {
-      expect(expectedError.message).to.equal('Cannot count to 2');
-    }
+    expect(expectedError)
+      .to.be.an.instanceOf(Error)
+      .with.property('message', 'Cannot count to 2');
 
-    expect(
-      await throwOver1.next()
-    ).to.deep.equal({ value: undefined, done: true });
+    expect(await throwOver1.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
 
     expect(didVisitFinally).to.equal(true);
   }
 
   it('closes source if mapper throws an error', async () => {
-    await testClosesSourceWithMapper(x => {
+    await testClosesSourceWithMapper((x) => {
       if (x > 1) {
         throw new Error('Cannot count to ' + x);
       }
@@ -288,25 +347,22 @@ describe('mapAsyncIterator', () => {
   });
 
   it('closes source if mapper rejects', async () => {
-    await testClosesSourceWithMapper(async x => {
-      if (x > 1) {
-        throw new Error('Cannot count to ' + x);
-      }
-      return x;
-    });
+    await testClosesSourceWithMapper((x) =>
+      x > 1
+        ? Promise.reject(new Error('Cannot count to ' + x))
+        : Promise.resolve(x),
+    );
   });
 
-  async function testClosesSourceWithRejectMapper(mapper) {
+  async function testClosesSourceWithRejectMapper<T>(mapper: (Error) => T) {
     async function* source() {
       yield 1;
       throw new Error(2);
     }
 
-    const throwOver1 = mapAsyncIterator(source(), x => x, mapper);
+    const throwOver1 = mapAsyncIterator(source(), (x) => x, mapper);
 
-    expect(
-      await throwOver1.next()
-    ).to.deep.equal({ value: 1, done: false });
+    expect(await throwOver1.next()).to.deep.equal({ value: 1, done: false });
 
     let expectedError;
     try {
@@ -315,26 +371,25 @@ describe('mapAsyncIterator', () => {
       expectedError = error;
     }
 
-    expect(expectedError).to.be.an('error');
-    if (expectedError) {
-      expect(expectedError.message).to.equal('Cannot count to 2');
-    }
+    expect(expectedError)
+      .to.be.an.instanceOf(Error)
+      .with.property('message', 'Cannot count to 2');
 
-    expect(
-      await throwOver1.next()
-    ).to.deep.equal({ value: undefined, done: true });
+    expect(await throwOver1.next()).to.deep.equal({
+      value: undefined,
+      done: true,
+    });
   }
 
   it('closes source if mapper throws an error', async () => {
-    await testClosesSourceWithRejectMapper(error => {
+    await testClosesSourceWithRejectMapper((error) => {
       throw new Error('Cannot count to ' + error.message);
     });
   });
 
   it('closes source if mapper rejects', async () => {
-    await testClosesSourceWithRejectMapper(async error => {
-      throw new Error('Cannot count to ' + error.message);
-    });
+    await testClosesSourceWithRejectMapper((error) =>
+      Promise.reject(new Error('Cannot count to ' + error.message)),
+    );
   });
-
 });

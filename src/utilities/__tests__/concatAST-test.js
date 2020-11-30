@@ -1,20 +1,16 @@
-/**
- * Copyright (c) 2015-present, Facebook, Inc.
- *
- * This source code is licensed under the MIT license found in the
- * LICENSE file in the root directory of this source tree.
- */
-
-import { describe, it } from 'mocha';
 import { expect } from 'chai';
-import dedent from '../../jsutils/dedent';
-import { concatAST } from '../concatAST';
-import { Source, parse, print } from '../../language';
+import { describe, it } from 'mocha';
 
+import dedent from '../../__testUtils__/dedent';
+
+import { parse } from '../../language/parser';
+import { print } from '../../language/printer';
+import { Source } from '../../language/source';
+
+import { concatAST } from '../concatAST';
 
 describe('concatAST', () => {
-
-  it('concats two ASTs together', () => {
+  it('concatenates two ASTs together', () => {
     const sourceA = new Source(`
       { a, b, ...Frag }
     `);
@@ -27,7 +23,7 @@ describe('concatAST', () => {
 
     const astA = parse(sourceA);
     const astB = parse(sourceB);
-    const astC = concatAST([ astA, astB ]);
+    const astC = concatAST([astA, astB]);
 
     expect(print(astC)).to.equal(dedent`
       {
@@ -41,5 +37,4 @@ describe('concatAST', () => {
       }
     `);
   });
-
 });
